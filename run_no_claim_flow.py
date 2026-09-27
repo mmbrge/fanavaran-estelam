@@ -334,6 +334,18 @@ def main():
                          help="چاپ جزئیات OCR گرید (برای عیب‌یابی مرحله ۸)")
     args = parser.parse_args()
 
+    # اگه فایل اکسل همزمان توی Excel باز باشه، ویندوز قفلش می‌کنه و write_status
+    # بعد از اولین ردیف با PermissionError از کار می‌افته؛ پس همین اول چک می‌کنیم.
+    if not os.path.exists(args.excel):
+        print(f"❌ فایل اکسل پیدا نشد: {args.excel}")
+        return
+    try:
+        with open(args.excel, "a+b"):
+            pass
+    except PermissionError:
+        print("❌ فایل اکسل الان توی Excel بازه (یا قفله). اول ببندش، بعد دوباره اجرا کن.")
+        return
+
     coords = load_coords()
 
     # --- چک اندازه پنجره قبل از شروع ---
