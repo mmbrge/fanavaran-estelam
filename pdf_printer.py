@@ -145,6 +145,22 @@ def _ancestor_window(ctrl):
     return None
 
 
+def _popup_message(dialog) -> str:
+    """
+    اگه روی یه دیالوگ، پیغام خطا (مثل «Path does not exist») باز شده باشه، متنش رو
+    برمی‌گردونه تا توی خطای برنامه دقیق دیده بشه.
+    """
+    try:
+        for popup in dialog.descendants(control_type="Window"):
+            texts = [t.window_text().strip() for t in popup.descendants(control_type="Text")]
+            texts = [t for t in texts if t]
+            if texts:
+                return " | ".join(texts)
+    except Exception:
+        pass
+    return ""
+
+
 def unique_pdf_path(folder: str, base_name: str = "استعلام خسارت") -> str:
     """
     مسیر فایل PDF رو برمی‌گردونه؛ اگه از قبل وجود داشت، (2)، (3)، ... اضافه می‌کنه تا
@@ -261,6 +277,11 @@ def confirm_print(dlg):
 
 def save_pdf(app, pdf_path, dialog_timeout=40, file_timeout=60):
     """پنجره‌ی Save ویندوز: نوشتن مسیر، زدن Save و چک ساخته شدن فایل."""
+    # پنجره‌ی Save خودش پوشه نمی‌سازه و اگه پوشه نباشه خطای «Path does not exist» می‌ده
+    folder = os.path.dirname(pdf_path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+
     holder = []
 
     def find_edit():
@@ -291,7 +312,13 @@ def save_pdf(app, pdf_path, dialog_timeout=40, file_timeout=60):
                  if b.element_info.automation_id == "1"]
     if not save_btns:
         raise PrintError("ذخیره", "دکمه‌ی Save پیدا نشد.")
-    _press(save_btns[0], lambda: _is_gone(save_dlg), 10, "ذخیره", "Save")
+    try:
+        _press(save_btns[0], lambda: _is_gone(save_dlg), 10, "ذخیره", "Save")
+    except PrintError:
+        popup_text = _popup_message(save_dlg)
+        if popup_text:
+            raise PrintError("ذخیره", f"پنجره‌ی Save بسته نشد؛ پیغام ویندوز: {popup_text}")
+        raise
 
     def file_ready():
         if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
