@@ -9,6 +9,7 @@ pdf_printer.py
 معرفی نشدن)، نمایشگر گزارش، پنجره‌ی Print و پنجره‌ی Save ویندوز کامل
 قابل‌شناسایی‌ان:
     - نمایشگر گزارش:  auto_id="FastReportViewerUserControl"
+    - دکمه‌ی Export To PDF: auto_id="btnExportToPdf" (مستقیم پنجره‌ی Save رو باز می‌کنه)
     - دکمه‌ی Print:   داخل auto_id="toolBar"، با title="Print"
     - پنجره‌ی Print:  auto_id="PrinterSetupForm"  (پرینتر: cbxPrinter، تأیید: btnOk)
     - پنجره‌ی Save:   فیلد نام فایل auto_id="1001"، دکمه‌ی Save با auto_id="1"
@@ -167,17 +168,52 @@ def connect_main(hwnd):
     return app, main
 
 
-def open_print_dialog(app, main, viewer_timeout=30):
-    """مرحله ۱۱: منتظر باز شدن نمایشگر گزارش می‌مونه و دکمه‌ی Print رو می‌زنه."""
+def _wait_viewer_button(main, make_button, label, viewer_timeout=30):
+    """
+    منتظر باز شدن نمایشگر گزارش و فعال شدن یکی از دکمه‌هاش می‌مونه
+    (تا وقتی گزارش کامل رندر نشده، دکمه‌ها غیرفعالن). خروجی: spec دکمه.
+    """
     viewer = main.child_window(auto_id="FastReportViewerUserControl")
     if not viewer.exists(timeout=viewer_timeout):
         raise PrintError(11, f"نمایشگر گزارش استعلام خسارت تا {viewer_timeout} ثانیه باز نشد.")
+    btn = make_button(viewer)
+    if not _wait_until(lambda: btn.exists(timeout=0) and btn.is_enabled(), viewer_timeout):
+        raise PrintError(11, f"دکمه‌ی «{label}» نمایشگر گزارش پیدا نشد یا فعال نشد.")
+    return btn
 
-    print_btn = viewer.child_window(auto_id="toolBar", control_type="ToolBar") \
-                      .child_window(title="Print", control_type="Button")
-    # تا وقتی گزارش کامل رندر نشده، دکمه‌ی Print غیرفعاله
-    if not _wait_until(lambda: print_btn.exists(timeout=0) and print_btn.is_enabled(), viewer_timeout):
-        raise PrintError(11, "دکمه‌ی Print نمایشگر گزارش پیدا نشد یا فعال نشد.")
+
+def _find_save_edit(app):
+    """فیلد «File name» پنجره‌ی Save ویندوز (auto_id=1001) رو توی همه‌ی پنجره‌های پروسه پیدا می‌کنه."""
+    for w in app.windows():
+        spec = app.window(handle=w.handle).child_window(auto_id="1001", control_type="Edit")
+        if spec.exists(timeout=0):
+            return spec.wrapper_object()
+    return None
+
+
+def export_to_pdf(app, main, dialog_timeout=40):
+    """
+    مرحله ۱۱ (روش export): زدن دکمه‌ی «Export To PDF» نمایشگر گزارش که مستقیم
+    پنجره‌ی Save رو باز می‌کنه — بدون پنجره‌ی Print و بدون نیاز به پرینتر PDF.
+    """
+    btn = _wait_viewer_button(
+        main,
+        lambda viewer: viewer.child_window(auto_id="btnExportToPdf", control_type="Button"),
+        "Export To PDF",
+    )
+    _press(btn.wrapper_object(), lambda: _find_save_edit(app) is not None,
+           dialog_timeout, 11, "Export To PDF")
+
+
+def open_print_dialog(app, main, viewer_timeout=30):
+    """مرحله ۱۱ (روش print): منتظر نمایشگر گزارش می‌مونه و دکمه‌ی Print رو می‌زنه."""
+    print_btn = _wait_viewer_button(
+        main,
+        lambda viewer: viewer.child_window(auto_id="toolBar", control_type="ToolBar")
+                             .child_window(title="Print", control_type="Button"),
+        "Print",
+        viewer_timeout,
+    )
 
     dlg_holder = []
 
@@ -224,15 +260,14 @@ def confirm_print(dlg):
 
 
 def save_pdf(app, pdf_path, dialog_timeout=40, file_timeout=60):
-    """پنجره‌ی «Save Print Output As»: نوشتن مسیر، زدن Save و چک ساخته شدن فایل."""
+    """پنجره‌ی Save ویندوز: نوشتن مسیر، زدن Save و چک ساخته شدن فایل."""
     holder = []
 
     def find_edit():
-        for w in app.windows():
-            spec = app.window(handle=w.handle).child_window(auto_id="1001", control_type="Edit")
-            if spec.exists(timeout=0):
-                holder.append(spec.wrapper_object())
-                return True
+        edit = _find_save_edit(app)
+        if edit is not None:
+            holder.append(edit)
+            return True
         return False
 
     if not _wait_until(find_edit, dialog_timeout, interval=0.5):
@@ -269,12 +304,21 @@ def save_pdf(app, pdf_path, dialog_timeout=40, file_timeout=60):
         raise PrintError("ذخیره", f"فایل PDF تا {file_timeout} ثانیه ساخته نشد: {pdf_path}")
 
 
-def print_report_to_pdf(hwnd, pdf_path, printer_name=PDF_PRINTER_NAME, log=print):
+def print_report_to_pdf(hwnd, pdf_path, method="export", printer_name=PDF_PRINTER_NAME, log=print):
     """
-    کل مسیر: نمایشگر گزارش → Print → انتخاب پرینتر PDF → Print → Save → چک فایل.
-    hwnd = پنجره‌ی اصلی Bime.exe. در صورت خطا PrintError با شماره‌ی مرحله.
+    ذخیره‌ی گزارش استعلام خسارت به‌صورت PDF. hwnd = پنجره‌ی اصلی Bime.exe.
+      method="export": Export To PDF → Save → چک فایل  (پیش‌فرض، کوتاه‌تر، بدون پرینتر)
+      method="print":  Print → انتخاب پرینتر PDF → Print → Save → چک فایل
+    در صورت خطا PrintError با شماره‌ی مرحله.
     """
     app, main = connect_main(hwnd)
+    if method == "export":
+        log("  [مرحله 11] منتظر نمایشگر گزارش و زدن Export To PDF...")
+        export_to_pdf(app, main)
+        log("  [ذخیره] نوشتن مسیر در پنجره‌ی Save...")
+        save_pdf(app, pdf_path)
+        return pdf_path
+
     log("  [مرحله 11] منتظر نمایشگر گزارش و زدن Print...")
     dlg = open_print_dialog(app, main)
     log(f"  [مرحله 12] انتخاب پرینتر «{printer_name}»...")
@@ -297,13 +341,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="تست پرینت/ذخیره‌ی PDF از نمایشگر گزارش باز فناوران")
     parser.add_argument("--out", required=True, help="مسیر کامل فایل PDF خروجی")
+    parser.add_argument("--method", choices=["export", "print"], default="export",
+                        help="export = دکمه‌ی Export To PDF (پیش‌فرض)، print = پرینت با Microsoft Print to PDF")
     parser.add_argument("--printer", default=PDF_PRINTER_NAME)
     args = parser.parse_args()
 
     from run_no_claim_flow import find_bime_window
     hwnd, _ = find_bime_window()
     try:
-        print_report_to_pdf(hwnd, args.out, args.printer)
+        print_report_to_pdf(hwnd, args.out, args.method, args.printer)
         print(f"\n✅ ذخیره شد: {args.out}")
     except PrintError as e:
         print(f"\n❌ {e}")

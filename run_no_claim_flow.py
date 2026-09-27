@@ -182,7 +182,7 @@ def find_person_folder(name: str) -> str:
 
 # ---------- فلوی اصلی ----------
 
-def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: str = "uia"):
+def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: str = "export"):
     """
     کل ۱۷ مرحله رو برای یه ردیف (یه کد بیمه‌گذار) اجرا می‌کنه.
     خطایی رخ بده، StepError با شماره مرحله raise می‌شه.
@@ -259,15 +259,16 @@ def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: s
     click_point(coords, left, top, "9", 9)
     click_point(coords, left, top, "10", 10)
 
-    if print_mode == "uia":
+    if print_mode in ("export", "print"):
         # مراحل ۱۱ تا ذخیره بدون مختصات، با UI Automation (pdf_printer.py): منتظر
-        # باز شدن واقعی نمایشگر گزارش می‌مونه (نه sleep ثابت)، پرینتر PDF رو انتخاب
-        # می‌کنه، مسیر رو مستقیم توی پنجره‌ی Save می‌نویسه و ساخته شدن فایل رو چک می‌کنه.
+        # باز شدن واقعی نمایشگر گزارش می‌مونه (نه sleep ثابت)، Export To PDF (یا پرینت
+        # با پرینتر PDF) رو می‌زنه، مسیر رو مستقیم توی پنجره‌ی Save می‌نویسه و ساخته
+        # شدن فایل رو چک می‌کنه.
         if print_report_to_pdf is None:
             raise StepError(11, "pdf_printer.py یا pywinauto در دسترس نیست — pip install pywinauto")
         pdf_path = unique_pdf_path(person_folder)
         try:
-            print_report_to_pdf(hwnd, pdf_path)
+            print_report_to_pdf(hwnd, pdf_path, method=print_mode)
         except PrintError as e:
             raise StepError(e.step, e.message)
         print(f"  [ذخیره] ✅ فایل ساخته شد: {pdf_path}")
@@ -325,8 +326,9 @@ def main():
                               "(پیش‌فرض، مطابق روال کاری فعلی)، 'white' = ردیف‌های بی‌رنگ/سفید.")
     parser.add_argument("--auto", action="store_true",
                          help="بدون مکث/تأیید بین ردیف‌ها اجرا کن (فقط بعد از اطمینان کامل!)")
-    parser.add_argument("--print-mode", choices=["uia", "coords"], default="uia",
-                         help="مراحل پرینت/ذخیره‌ی PDF: 'uia' = بدون مختصات با UI Automation (پیش‌فرض)، "
+    parser.add_argument("--print-mode", choices=["export", "print", "coords"], default="export",
+                         help="ذخیره‌ی PDF: 'export' = دکمه‌ی Export To PDF بدون مختصات (پیش‌فرض)، "
+                              "'print' = پرینت با Microsoft Print to PDF بدون مختصات، "
                               "'coords' = روش قدیمی با نقاط ۱۱ تا ۱۳")
     parser.add_argument("--debug", action="store_true",
                          help="چاپ جزئیات OCR گرید (برای عیب‌یابی مرحله ۸)")
