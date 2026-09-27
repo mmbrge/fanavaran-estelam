@@ -331,6 +331,28 @@ def save_pdf(app, pdf_path, dialog_timeout=40, file_timeout=60):
         raise PrintError("ذخیره", f"فایل PDF تا {file_timeout} ثانیه ساخته نشد: {pdf_path}")
 
 
+def close_leftover_dialogs(hwnd) -> int:
+    """
+    بعد از خطا: هر پنجره‌ی باز مونده‌ی Bime.exe غیر از پنجره‌ی اصلی (پنجره‌ی Save،
+    ProgressForm، پیغام خطا و ...) رو می‌بنده تا تلاش بعدی از حالت تمیز شروع بشه.
+    پنجره‌ی Save با بستن Cancel می‌شه؛ پس هیچ فایلی نصفه ذخیره نمی‌شه.
+    خروجی: تعداد پنجره‌های بسته‌شده.
+    """
+    if Application is None:
+        return 0
+    app = Application(backend="uia").connect(handle=hwnd, timeout=5)
+    closed = 0
+    for w in app.windows():
+        try:
+            if w.handle == hwnd or not w.is_visible():
+                continue
+            w.close()
+            closed += 1
+        except Exception:
+            pass
+    return closed
+
+
 def print_report_to_pdf(hwnd, pdf_path, method="export", printer_name=PDF_PRINTER_NAME, log=print):
     """
     ذخیره‌ی گزارش استعلام خسارت به‌صورت PDF. hwnd = پنجره‌ی اصلی Bime.exe.

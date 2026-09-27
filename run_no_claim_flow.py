@@ -79,9 +79,10 @@ from grid_reader import find_last_zero_row_with_scroll
 from folder_utils import current_persian_year_month, sanitize_folder_name
 
 try:
-    from pdf_printer import print_report_to_pdf, unique_pdf_path, PrintError
+    from pdf_printer import print_report_to_pdf, unique_pdf_path, PrintError, close_leftover_dialogs
 except ImportError:
     print_report_to_pdf = None
+    close_leftover_dialogs = None
 
 COORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coords.json")
 DEBUG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug")
@@ -181,11 +182,11 @@ def click_point(coords, left, top, label, step_num):
     print(f"  [مرحله {step_num}] کلیک روی '{label}' -> ({x},{y})")
 
 
-def save_error_screenshot(excel_row: int, step) -> str:
+def save_error_screenshot(excel_row: int, step, attempt: int = 1) -> str:
     """از کل صفحه در لحظه‌ی خطا عکس می‌گیره (پوشه‌ی debug) تا معلوم باشه کجا گیر کرد."""
     try:
         os.makedirs(DEBUG_DIR, exist_ok=True)
-        path = os.path.join(DEBUG_DIR, f"error_row{excel_row}_step{step}_{time.strftime('%H%M%S')}.png")
+        path = os.path.join(DEBUG_DIR, f"error_row{excel_row}_step{step}_try{attempt}_{time.strftime('%H%M%S')}.png")
         pyautogui.screenshot().save(path)
         print(f"  🖼 عکس لحظه‌ی خطا: {path}")
         return path
@@ -344,7 +345,8 @@ def find_person_folder(name: str) -> str:
 
 # ---------- فلوی اصلی ----------
 
-def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: str = "export"):
+def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: str = "export",
+                progress: dict = None):
     """
     کل ۱۷ مرحله رو برای یه ردیف (یه کد بیمه‌گذار) اجرا می‌کنه.
     خطایی رخ بده، StepError با شماره مرحله raise می‌شه.
@@ -433,6 +435,8 @@ def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: s
         except PrintError as e:
             raise StepError(e.step, e.message)
         print(f"  [ذخیره] ✅ فایل ساخته شد: {pdf_path}")
+        if progress is not None:
+            progress["pdf_path"] = pdf_path
         time.sleep(1.0)
         focus_window(hwnd)  # برای مراحل ۱۴ تا ۱۷ که هنوز با مختصات هستن
     else:
@@ -467,6 +471,8 @@ def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: s
         pyautogui.press("enter")  # فشردن Save
         print("  ⏳ صبر ۳ ثانیه برای ذخیره شدن...")
         time.sleep(3.0)
+        if progress is not None and os.path.exists(full_path_no_ext + ".pdf"):
+            progress["pdf_path"] = full_path_no_ext + ".pdf"
 
     # مراحل ۱۴ تا ۱۷ - هر کدوم ۱ ثانیه فاصله
     for step_num in [14, 15, 16, 17]:
@@ -474,6 +480,52 @@ def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: s
         time.sleep(1.0)
 
     return person_folder
+
+
+def recover_ui():
+    """
+    بعد از خطا در یه ردیف: فناوران رو به حالت تمیز برمی‌گردونه تا ردیف از مرحله‌ی ۱
+    دوباره شروع بشه — منوهای باز و پنجره‌های مودال (جستجو، Print، Save، پیغام خطا)
+    با Esc و بستن مستقیم پنجره‌های اضافه‌ی Bime.exe. به پنجره‌ی اصلی دست نمی‌زنه.
+    """
+    print("  🔄 برگردوندن فناوران به حالت اولیه...")
+    try:
+        hwnd, _ = find_bime_window()
+    except StepError as e:
+        print(f"  ⚠ {e.message}")
+        return
+    try:
+        focus_window(hwnd)
+    except Exception:
+        pass
+    for _ in range(3):
+        pyautogui.press("esc")
+        time.sleep(0.4)
+    if close_leftover_dialogs is not None:
+        try:
+            n = close_leftover_dialogs(hwnd)
+            if n:
+                print(f"  🔄 {n} پنجره‌ی باز مونده بسته شد")
+        except Exception as e:
+            print(f"  ⚠ بستن پنجره‌های اضافه انجام نشد: {e}")
+    time.sleep(1.5)
+
+
+def safe_write_status(excel, row_index, text, fill_argb, insurer_col, sheet=None, header_row=1):
+    """
+    مثل write_status، ولی اگه اکسل وسط کار باز شده باشه (قفل)، چند بار صبر و تکرار
+    می‌کنه و در نهایت فقط هشدار می‌ده — تا کل اجرای خودکار به‌خاطر یه ذخیره نخوابه.
+    """
+    for attempt in range(1, 6):
+        try:
+            write_status(excel, row_index, text, sheet_name=sheet, header_row=header_row,
+                         fill_argb=fill_argb, insurer_col_name=insurer_col)
+            return True
+        except PermissionError:
+            print(f"  ⚠ فایل اکسل قفله (احتمالاً توی Excel بازه) — ببندش؛ تلاش {attempt}/5 ...")
+            time.sleep(5)
+    print(f"  ❌ وضعیت ردیف {row_index} توی اکسل نوشته نشد: {text}")
+    return False
 
 
 def main():
@@ -485,8 +537,13 @@ def main():
     parser.add_argument("--select", choices=["yellow", "white"], default="yellow",
                          help="کدوم ردیف‌ها پردازش بشن: 'yellow' = ردیف‌های هایلایت‌زرد "
                               "(پیش‌فرض، مطابق روال کاری فعلی)، 'white' = ردیف‌های بی‌رنگ/سفید.")
-    parser.add_argument("--auto", action="store_true",
-                         help="بدون مکث/تأیید بین ردیف‌ها اجرا کن (فقط بعد از اطمینان کامل!)")
+    parser.add_argument("--confirm", action="store_true",
+                         help="بعد از هر ردیف منتظر Enter بمون (پیش‌فرض: همه‌ی ردیف‌ها خودکار و بدون تأیید)")
+    parser.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)  # سازگاری با قبل؛ الان پیش‌فرضه
+    parser.add_argument("--retries", type=int, default=2,
+                         help="اگه یه ردیف خطا داد، چند بار دیگه از اول تکرار بشه (پیش‌فرض ۲)")
+    parser.add_argument("--max-consecutive-failures", type=int, default=3,
+                         help="اگه این‌همه ردیف پشت‌سرهم (بعد از همه‌ی تکرارها) شکست خوردن، اجرا متوقف بشه")
     parser.add_argument("--print-mode", choices=["export", "print", "coords"], default="export",
                          help="ذخیره‌ی PDF: 'export' = دکمه‌ی Export To PDF بدون مختصات (پیش‌فرض)، "
                               "'print' = پرینت با Microsoft Print to PDF بدون مختصات، "
@@ -564,39 +621,98 @@ def main():
         rows = get_white_rows(args.excel, args.sheet, args.insurer_col, args.header_row)
         print(f"\n{len(rows)} ردیف سفید (پردازش‌نشده) پیدا شد.\n")
 
-    for idx, row in enumerate(rows, 1):
-        print(f"\n{'=' * 55}")
-        print(f"ردیف {idx}/{len(rows)}  (اکسل ردیف {row.row_index}):  نام={row.name}  کد={row.code}")
-        print("=" * 55)
+    max_attempts = 1 + max(0, args.retries)
+    failsafe_exc = getattr(pyautogui, "FailSafeException", ())
+    done_rows, failed_rows = [], []
+    consecutive_failures = 0
+    if not args.confirm:
+        print(f"▶ اجرای خودکار همه‌ی ردیف‌ها (بدون تأیید). هر ردیف در صورت خطا تا {max_attempts} بار "
+              f"از اول انجام می‌شه. توقف اضطراری: موس رو ببر گوشه‌ی بالا-چپ صفحه.")
 
-        if not row.code:
-            write_status(args.excel, row.row_index, "خطا: کد استخراج نشد",
-                         fill_argb=RED_FILL_ARGB, insurer_col_name=args.insurer_col)
-            print("  ❌ کدی استخراج نشد.")
-            continue
+    try:
+        for idx, row in enumerate(rows, 1):
+            print(f"\n{'=' * 55}")
+            print(f"ردیف {idx}/{len(rows)}  (اکسل ردیف {row.row_index}):  نام={row.name}  کد={row.code}")
+            print("=" * 55)
 
-        try:
-            folder = run_one_row(coords, row.code, row.name or "", debug=args.debug,
-                                 print_mode=args.print_mode)
-            write_status(args.excel, row.row_index, "انجام شد",
-                         fill_argb=GREEN_FILL_ARGB, insurer_col_name=args.insurer_col)
-            print(f"  ✅ موفق. ذخیره در: {folder}")
-        except StepError as e:
-            save_error_screenshot(row.row_index, e.step)
-            write_status(args.excel, row.row_index, f"خطا در مرحله {e.step}: {e.message}",
-                         fill_argb=RED_FILL_ARGB, insurer_col_name=args.insurer_col)
-            print(f"  ❌ خطا در مرحله {e.step}: {e.message}")
-        except Exception as e:
-            save_error_screenshot(row.row_index, "x")
-            write_status(args.excel, row.row_index, f"خطای غیرمنتظره: {e}",
-                         fill_argb=RED_FILL_ARGB, insurer_col_name=args.insurer_col)
-            print(f"  ❌ خطای غیرمنتظره: {e}")
+            if not row.code:
+                safe_write_status(args.excel, row.row_index, "خطا: کد استخراج نشد", RED_FILL_ARGB,
+                                  args.insurer_col, args.sheet, args.header_row)
+                print("  ❌ کدی استخراج نشد.")
+                failed_rows.append((row, "کد استخراج نشد"))
+                continue
 
-        if not args.auto:
-            resp = input("\n➡️  Enter برای ادامه به ردیف بعد، یا 'q' برای توقف: ").strip().lower()
-            if resp == "q":
-                print("متوقف شد.")
-                break
+            last_error, folder, progress, attempt = None, None, {}, 0
+            for attempt in range(1, max_attempts + 1):
+                progress = {}
+                if attempt > 1:
+                    print(f"  🔁 تکرار ردیف از مرحله‌ی ۱ (تلاش {attempt}/{max_attempts})...")
+                try:
+                    folder = run_one_row(coords, row.code, row.name or "", debug=args.debug,
+                                         print_mode=args.print_mode, progress=progress)
+                    last_error = None
+                    break
+                except failsafe_exc:
+                    raise
+                except StepError as e:
+                    last_error = e
+                except Exception as e:
+                    last_error = StepError("x", f"خطای غیرمنتظره: {e}")
+
+                save_error_screenshot(row.row_index, last_error.step, attempt)
+                print(f"  ❌ تلاش {attempt}/{max_attempts} — خطا در مرحله {last_error.step}: {last_error.message}")
+                if last_error.step == 0:
+                    break  # Bime.exe بسته‌ست؛ تکرار فایده نداره
+                if progress.get("pdf_path"):
+                    break  # PDF ذخیره شده؛ تکرار فقط یه PDF تکراری می‌سازه
+                recover_ui()
+
+            if last_error is None:
+                note = "انجام شد" + (f" (تلاش {attempt})" if attempt > 1 else "")
+                safe_write_status(args.excel, row.row_index, note, GREEN_FILL_ARGB,
+                                  args.insurer_col, args.sheet, args.header_row)
+                print(f"  ✅ موفق{' در تلاش ' + str(attempt) if attempt > 1 else ''}. ذخیره در: {folder}")
+                done_rows.append(row)
+                consecutive_failures = 0
+            elif progress.get("pdf_path"):
+                # خود کار اصلی (PDF) انجام شده؛ فقط مراحل پایانی خطا داشتن
+                note = f"انجام شد؛ PDF ذخیره شد ولی مرحله {last_error.step} خطا داشت: {last_error.message}"
+                safe_write_status(args.excel, row.row_index, note, GREEN_FILL_ARGB,
+                                  args.insurer_col, args.sheet, args.header_row)
+                print(f"  ✅ PDF ذخیره شد ({progress['pdf_path']})، ولی مراحل پایانی خطا داشتن.")
+                done_rows.append(row)
+                consecutive_failures = 0
+                recover_ui()
+            else:
+                note = f"خطا در مرحله {last_error.step} (بعد از {attempt} تلاش): {last_error.message}"
+                safe_write_status(args.excel, row.row_index, note, RED_FILL_ARGB,
+                                  args.insurer_col, args.sheet, args.header_row)
+                failed_rows.append((row, note))
+                consecutive_failures += 1
+                if last_error.step == 0:
+                    print("⛔ فناوران (Bime.exe) در دسترس نیست — اجرا متوقف شد.")
+                    break
+                if consecutive_failures >= args.max_consecutive_failures:
+                    print(f"⛔ {consecutive_failures} ردیف پشت‌سرهم شکست خوردن — احتمالاً مشکل کلی‌تره "
+                          f"(فناوران قطع شده یا صفحه عوض شده). اجرا متوقف شد.")
+                    break
+
+            if args.confirm:
+                resp = input("\n➡️  Enter برای ادامه به ردیف بعد، یا 'q' برای توقف: ").strip().lower()
+                if resp == "q":
+                    print("متوقف شد.")
+                    break
+            else:
+                time.sleep(1.0)
+    except failsafe_exc:
+        print("\n⛔ توقف اضطراری (موس به گوشه‌ی صفحه رفت).")
+    except KeyboardInterrupt:
+        print("\n⛔ با Ctrl+C متوقف شد.")
+
+    print(f"\n{'=' * 55}")
+    print(f"پایان: {len(done_rows)} ردیف موفق، {len(failed_rows)} ردیف ناموفق، از {len(rows)} ردیف.")
+    for row, note in failed_rows:
+        print(f"  ❌ اکسل ردیف {row.row_index} ({row.name}): {note}")
 
 
 if __name__ == "__main__":
