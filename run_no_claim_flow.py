@@ -76,6 +76,11 @@ from excel_utils import (
 from grid_reader import find_last_zero_row_with_scroll
 from folder_utils import current_persian_year_month, sanitize_folder_name
 
+try:
+    from pdf_printer import print_report_to_pdf, unique_pdf_path, PrintError
+except ImportError:
+    print_report_to_pdf = None
+
 COORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coords.json")
 TARGET_EXE = "Bime.exe"
 BASE_FOLDER = r"C:\Bime Ba Ma\فناوران اتومات\استعلام خسارت"
@@ -177,7 +182,7 @@ def find_person_folder(name: str) -> str:
 
 # ---------- فلوی اصلی ----------
 
-def run_one_row(coords, code: str, name: str, debug: bool = False):
+def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: str = "uia"):
     """
     کل ۱۷ مرحله رو برای یه ردیف (یه کد بیمه‌گذار) اجرا می‌کنه.
     خطایی رخ بده، StepError با شماره مرحله raise می‌شه.
@@ -254,36 +259,52 @@ def run_one_row(coords, code: str, name: str, debug: bool = False):
     click_point(coords, left, top, "9", 9)
     click_point(coords, left, top, "10", 10)
 
-    # بعد از ۸ ثانیه، پنجره PDF استعلام خسارت باز می‌شه
-    print("  ⏳ صبر ۸ ثانیه برای باز شدن پنجره PDF...")
-    time.sleep(8.0)
+    if print_mode == "uia":
+        # مراحل ۱۱ تا ذخیره بدون مختصات، با UI Automation (pdf_printer.py): منتظر
+        # باز شدن واقعی نمایشگر گزارش می‌مونه (نه sleep ثابت)، پرینتر PDF رو انتخاب
+        # می‌کنه، مسیر رو مستقیم توی پنجره‌ی Save می‌نویسه و ساخته شدن فایل رو چک می‌کنه.
+        if print_report_to_pdf is None:
+            raise StepError(11, "pdf_printer.py یا pywinauto در دسترس نیست — pip install pywinauto")
+        pdf_path = unique_pdf_path(person_folder)
+        try:
+            print_report_to_pdf(hwnd, pdf_path)
+        except PrintError as e:
+            raise StepError(e.step, e.message)
+        print(f"  [ذخیره] ✅ فایل ساخته شد: {pdf_path}")
+        time.sleep(1.0)
+        focus_window(hwnd)  # برای مراحل ۱۴ تا ۱۷ که هنوز با مختصات هستن
+    else:
+        # روش قدیمی مبتنی بر مختصات (--print-mode coords)
+        # بعد از ۸ ثانیه، پنجره PDF استعلام خسارت باز می‌شه
+        print("  ⏳ صبر ۸ ثانیه برای باز شدن پنجره PDF...")
+        time.sleep(8.0)
 
-    # مرحله ۱۱: (دکمه پرینت توی PDF viewer)
-    click_point(coords, left, top, "11", 11)
-    time.sleep(1.5)
+        # مرحله ۱۱: (دکمه پرینت توی PDF viewer)
+        click_point(coords, left, top, "11", 11)
+        time.sleep(1.5)
 
-    # مرحله ۱۲: انتخاب Microsoft Print to PDF
-    click_point(coords, left, top, "12", 12)
-    time.sleep(0.5)
+        # مرحله ۱۲: انتخاب Microsoft Print to PDF
+        click_point(coords, left, top, "12", 12)
+        time.sleep(0.5)
 
-    # مرحله ۱۳: دکمه Print
-    click_point(coords, left, top, "13", 13)
-    print("  ⏳ صبر ۲ ثانیه برای باز شدن پنجره Save...")
-    time.sleep(2.0)
+        # مرحله ۱۳: دکمه Print
+        click_point(coords, left, top, "13", 13)
+        print("  ⏳ صبر ۲ ثانیه برای باز شدن پنجره Save...")
+        time.sleep(2.0)
 
-    # پنجره «Save Print Output As» - مستقیم توی فیلد File name مسیر کامل رو تایپ می‌کنیم
-    # (پنجره Save همیشه فیلد File name رو فوکوس‌شده باز می‌کنه، نیازی به کلیک نیست)
-    full_path_no_ext = os.path.join(person_folder, "استعلام خسارت")
-    pyautogui.hotkey("ctrl", "a")  # هر چیزی از قبل توی فیلد بود پاک بشه
-    time.sleep(0.2)
-    # مسیر شامل حروف فارسی («استعلام خسارت» + اسم فارسی شخص + نام ماه) هست، پس
-    # باید پیست بشه نه typewrite (typewrite حروف فارسی رو نادیده می‌گیره).
-    paste_text(full_path_no_ext, 13)
-    print(f"  [ذخیره] مسیر: {full_path_no_ext}.pdf")
-    time.sleep(0.3)
-    pyautogui.press("enter")  # فشردن Save
-    print("  ⏳ صبر ۳ ثانیه برای ذخیره شدن...")
-    time.sleep(3.0)
+        # پنجره «Save Print Output As» - مستقیم توی فیلد File name مسیر کامل رو تایپ می‌کنیم
+        # (پنجره Save همیشه فیلد File name رو فوکوس‌شده باز می‌کنه، نیازی به کلیک نیست)
+        full_path_no_ext = os.path.join(person_folder, "استعلام خسارت")
+        pyautogui.hotkey("ctrl", "a")  # هر چیزی از قبل توی فیلد بود پاک بشه
+        time.sleep(0.2)
+        # مسیر شامل حروف فارسی («استعلام خسارت» + اسم فارسی شخص + نام ماه) هست، پس
+        # باید پیست بشه نه typewrite (typewrite حروف فارسی رو نادیده می‌گیره).
+        paste_text(full_path_no_ext, 13)
+        print(f"  [ذخیره] مسیر: {full_path_no_ext}.pdf")
+        time.sleep(0.3)
+        pyautogui.press("enter")  # فشردن Save
+        print("  ⏳ صبر ۳ ثانیه برای ذخیره شدن...")
+        time.sleep(3.0)
 
     # مراحل ۱۴ تا ۱۷ - هر کدوم ۱ ثانیه فاصله
     for step_num in [14, 15, 16, 17]:
@@ -304,6 +325,9 @@ def main():
                               "(پیش‌فرض، مطابق روال کاری فعلی)، 'white' = ردیف‌های بی‌رنگ/سفید.")
     parser.add_argument("--auto", action="store_true",
                          help="بدون مکث/تأیید بین ردیف‌ها اجرا کن (فقط بعد از اطمینان کامل!)")
+    parser.add_argument("--print-mode", choices=["uia", "coords"], default="uia",
+                         help="مراحل پرینت/ذخیره‌ی PDF: 'uia' = بدون مختصات با UI Automation (پیش‌فرض)، "
+                              "'coords' = روش قدیمی با نقاط ۱۱ تا ۱۳")
     parser.add_argument("--debug", action="store_true",
                          help="چاپ جزئیات OCR گرید (برای عیب‌یابی مرحله ۸)")
     args = parser.parse_args()
@@ -351,7 +375,8 @@ def main():
             continue
 
         try:
-            folder = run_one_row(coords, row.code, row.name or "", debug=args.debug)
+            folder = run_one_row(coords, row.code, row.name or "", debug=args.debug,
+                                 print_mode=args.print_mode)
             write_status(args.excel, row.row_index, "انجام شد",
                          fill_argb=GREEN_FILL_ARGB, insurer_col_name=args.insurer_col)
             print(f"  ✅ موفق. ذخیره در: {folder}")
