@@ -208,7 +208,8 @@ def paste_text(text: str, step_num: int):
     pyautogui.hotkey("ctrl", "v")
 
 
-SEARCH_TEMPLATES = ("search_dialog", "search_chip", "search_apply")
+SEARCH_TEMPLATES = ("search_dialog", "search_apply")            # لازم
+SEARCH_OPTIONAL_TEMPLATES = ("search_clear", "search_field")     # اختیاری
 
 
 def _grid_strip(left, top, grid_config):
@@ -245,17 +246,62 @@ def wait_grid_updated(left, top, grid_config, before, timeout=12.0) -> str:
     return "changed" if changed else "unchanged"
 
 
-def search_insurer(code: str, left: int, top: int, grid_config):
+def _click_template(label: str, step_num: int, timeout: float = 5.0):
+    try:
+        x, y, _ = screen_locator.locate(label, timeout=timeout)
+    except LookupError as e:
+        raise StepError(step_num, str(e))
+    pyautogui.click(x, y)
+
+
+def _search_once(code_typed: str, left: int, top: int, grid_config, suggest_wait: float) -> str:
+    """یه‌بار: پنجره‌ی جستجو (باید باز شده باشه) → تایپ کد → انتخاب → «اعمال» → وضعیت گرید."""
+    if not screen_locator.wait_visible("search_dialog", 10):
+        raise StepError(7, "پنجره‌ی «جست و جو» بعد از زدن Numpad − باز نشد.")
+    time.sleep(0.3)
+
+    # فیلتر جستجوی قبلی (مثلاً بیمه‌گذار ردیف قبل) نباید بمونه، وگرنه نتیجه قاطی می‌شه
+    if screen_locator.has_template("search_clear"):
+        _click_template("search_clear", 7)
+        time.sleep(0.8)
+    if screen_locator.has_template("search_field"):
+        _click_template("search_field", 7)
+        time.sleep(0.3)
+
+    pyautogui.hotkey("ctrl", "a")
+    time.sleep(0.2)
+    pyautogui.typewrite(code_typed, interval=0.05)
+    print(f"  [مرحله 7] تایپ کد: {code_typed}  (صبر {suggest_wait:g} ثانیه برای لیست پیشنهاد)")
+    time.sleep(suggest_wait)          # فرصت رسیدن لیست پیشنهاد از سرور
+    pyautogui.press("enter")          # انتخاب بیمه‌گذار از لیست
+    time.sleep(1.0)
+
+    before = _grid_strip(left, top, grid_config) if grid_config else None
+    _click_template("search_apply", 7)
+    if not screen_locator.wait_gone("search_dialog", 10):
+        raise StepError(7, "بعد از زدن «اعمال»، پنجره‌ی جستجو بسته نشد.")
+    print("  [مرحله 7] ✅ «اعمال» زده شد و پنجره‌ی جستجو بسته شد")
+    if before is None:
+        return "stable"
+    return wait_grid_updated(left, top, grid_config, before)
+
+
+def search_insurer(code: str, left: int, top: int, grid_config, reopen_search):
     """
     مرحله ۷: پنجره‌ی «جست و جو» (با Numpad − باز شده) → تایپ کد → انتخاب بیمه‌گذار از
     لیست پیشنهاد → «اعمال» → صبر تا گرید نتیجه‌ی واقعی رو نشون بده.
 
-    به‌جای sleep ثابت، هر قدم با تصویرش تأیید می‌شه:
-        search_dialog = عنوان پنجره‌ی «جست و جو»   (باز شدن/بسته شدن پنجره)
-        search_chip   = دکمه‌ی ▾≡ و علامت × کنارش در فیلد «بیمه گذار» (یعنی بیمه‌گذار
-                        از لیست انتخاب شده)؛ نقطه‌ی کلیکش روی × (برای پاک کردن انتخاب قبلی)
-        search_apply  = دکمه‌ی «اعمال»
-    اگه این تصاویر ساخته نشده باشن، روش قدیمی (دو Enter با مکث ثابت) اجرا می‌شه.
+    به‌جای sleep کور، با تصاویر تأیید می‌شه:
+        search_dialog = عنوان پنجره‌ی «جست و جو»  (باز شدن/بسته شدن پنجره)   ← لازم
+        search_apply  = دکمه‌ی «اعمال»                                      ← لازم
+        search_clear  = لینک «حذف همه فیلترها» (پاک کردن فیلتر ردیف قبل)      ← اختیاری
+        search_field  = عنوان «بیمه گذار» + فیلدش (کلیک توی فیلد)             ← اختیاری
+
+    محافظ اصلی: بعد از «اعمال» ستون الحاقیه‌ی گرید باید عوض بشه (گرید قبل از جستجو
+    لیست پیش‌فرضه). اگه عوض نشد یعنی فیلتر بیمه‌گذار اعمال نشده (مثلاً لیست پیشنهاد
+    دیر رسید و Enter هدر رفت)؛ یه‌بار با صبر بیشتر تکرار می‌شه و بعد خطا — تا هیچ‌وقت
+    گرید اشتباه خونده نشه و PDF شخص دیگه‌ای ذخیره نشه.
+    اگه تصاویر لازم ساخته نشده باشن، روش قدیمی (دو Enter با مکث ثابت) اجرا می‌شه.
     """
     code_typed = to_western_digits(code)
     missing = [t for t in SEARCH_TEMPLATES if not screen_locator.has_template(t)]
@@ -273,58 +319,19 @@ def search_insurer(code: str, left: int, top: int, grid_config):
         time.sleep(1.0)
         return
 
-    if not screen_locator.wait_visible("search_dialog", 10):
-        raise StepError(7, "پنجره‌ی «جست و جو» بعد از زدن Numpad − باز نشد.")
-    time.sleep(0.3)
-
-    # اگه از جستجوی قبلی هنوز یه بیمه‌گذار انتخاب‌شده (چیپ) مونده، اول پاکش کن؛
-    # وگرنه تأیید «چیپ ظاهر شد» الکی درست درمیاد.
-    if screen_locator.is_visible("search_chip"):
-        x, y, _ = screen_locator.locate("search_chip", timeout=1)
-        pyautogui.click(x, y)
-        print("  [مرحله 7] بیمه‌گذار انتخاب‌شده‌ی قبلی پاک شد")
-        if not screen_locator.wait_gone("search_chip", 4):
-            raise StepError(7, "بیمه‌گذار انتخاب‌شده‌ی قبلی توی پنجره‌ی جستجو پاک نشد.")
-
-    pyautogui.hotkey("ctrl", "a")
-    time.sleep(0.2)
-    pyautogui.typewrite(code_typed, interval=0.05)
-    print(f"  [مرحله 7] تایپ کد: {code}")
-
-    # Enter اول بیمه‌گذار رو از لیست پیشنهاد انتخاب می‌کنه؛ اما اگه لیست هنوز از سرور
-    # نرسیده باشه، Enter هدر می‌ره. پس تا ظاهر شدن چیپ صبر و در صورت نیاز تکرار.
-    selected = False
-    for attempt in range(1, 3):
-        time.sleep(1.5)  # فرصت لود شدن لیست پیشنهاد
-        pyautogui.press("enter")
-        if screen_locator.wait_visible("search_chip", 4):
-            selected = True
-            break
-        if not screen_locator.is_visible("search_dialog"):
-            raise StepError(7, "پنجره‌ی جستجو قبل از انتخاب بیمه‌گذار بسته شد (فیلتر ممکنه با متن خام اعمال شده باشه).")
-        print(f"  ⏳ بیمه‌گذار هنوز از لیست انتخاب نشده (تلاش {attempt})...")
-    if not selected:
-        raise StepError(7, f"بیمه‌گذار با کد {code} از لیست پیشنهاد انتخاب نشد. کد توی فناوران درسته؟")
-    print("  [مرحله 7] ✅ بیمه‌گذار از لیست انتخاب شد")
-
-    before = _grid_strip(left, top, grid_config) if grid_config else None
-    try:
-        x, y, _ = screen_locator.locate("search_apply", timeout=5)
-    except LookupError as e:
-        raise StepError(7, str(e))
-    pyautogui.click(x, y)
-    if not screen_locator.wait_gone("search_dialog", 10):
-        raise StepError(7, "بعد از زدن «اعمال»، پنجره‌ی جستجو بسته نشد.")
-    print("  [مرحله 7] ✅ «اعمال» زده شد و پنجره‌ی جستجو بسته شد")
-
-    if before is not None:
-        status = wait_grid_updated(left, top, grid_config, before)
+    for attempt, suggest_wait in ((1, 2.5), (2, 5.0)):
+        status = _search_once(code_typed, left, top, grid_config, suggest_wait)
         if status == "stable":
             print("  [مرحله 7] ✅ نتیجه‌ی جستجو توی گرید لود شد")
-        elif status == "changed":
+            return
+        if status == "changed":
             print("  ⚠ گرید عوض شد ولی هنوز ثابت نشده؛ مرحله‌ی ۸ در صورت نیاز دوباره می‌خونه.")
-        else:
-            print("  ⚠ گرید بعد از «اعمال» تغییری نکرد (شاید نتیجه همون قبلیه).")
+            return
+        if attempt == 1:
+            print("  ⚠ گرید بعد از «اعمال» عوض نشد (فیلتر اعمال نشد). جستجو با صبر بیشتر تکرار می‌شه...")
+            reopen_search()
+    raise StepError(7, f"بعد از «اعمال» گرید عوض نشد؛ یعنی فیلتر بیمه‌گذار با کد {code} اعمال نشده "
+                       f"(لیست پیشنهاد نیومد یا کد توی فناوران نیست).")
 
 
 def find_person_folder(name: str) -> str:
@@ -377,7 +384,12 @@ def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: s
     print("  [کلید] Subtract (Numpad -) زده شد -> پنجره جستجو باید باز شده باشه")
 
     # مرحله ۷: جستجوی بیمه‌گذار (با تأیید هر قدم اگه تصاویر search_* ساخته شده باشن)
-    search_insurer(code, left, top, coords.get("grid"))
+    def reopen_search():
+        click_point(coords, left, top, "6", 6)
+        time.sleep(0.5)
+        pyautogui.press("subtract")
+
+    search_insurer(code, left, top, coords.get("grid"), reopen_search)
 
     # مرحله ۸: پیدا کردن آخرین ردیف با مقدار 0 (OCR)
     grid_config = coords.get("grid")
@@ -500,7 +512,8 @@ def main():
 
     coords = load_coords()
     with_templates = [str(n) for n in range(1, 18) if screen_locator.has_template(str(n))]
-    with_templates += [t for t in SEARCH_TEMPLATES + ("status_ok",) if screen_locator.has_template(t)]
+    with_templates += [t for t in SEARCH_TEMPLATES + SEARCH_OPTIONAL_TEMPLATES + ("status_ok",)
+                       if screen_locator.has_template(t)]
     if with_templates:
         print(f"🖼 مراحلی که با تصویر پیدا می‌شن (بدون مختصات): {', '.join(with_templates)}")
         if not screen_locator.available():
