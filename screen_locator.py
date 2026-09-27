@@ -143,3 +143,34 @@ def locate(label: str, region=None, confidence=None, timeout=8.0, interval=0.3):
                 f"(بهترین شباهت: {best:.2f}، حداقل لازم: {conf:.2f})."
             )
         time.sleep(interval)
+
+
+def is_visible(label: str, confidence=None) -> bool:
+    """آیا تصویر این مرحله همین الان روی صفحه دیده می‌شه؟ (یه‌بار چک، بدون صبر)"""
+    meta = load_meta(label)
+    conf = confidence or meta.get("confidence", DEFAULT_CONFIDENCE)
+    template = _load_gray(template_path(label))
+    score, loc = match(template, to_gray(pyautogui.screenshot()))
+    return loc is not None and score >= conf
+
+
+def wait_visible(label: str, timeout: float, interval: float = 0.3) -> bool:
+    """تا timeout ثانیه منتظر می‌مونه تصویر ظاهر بشه. خروجی: True اگه ظاهر شد."""
+    end = time.time() + timeout
+    while True:
+        if is_visible(label):
+            return True
+        if time.time() >= end:
+            return False
+        time.sleep(interval)
+
+
+def wait_gone(label: str, timeout: float, interval: float = 0.3) -> bool:
+    """تا timeout ثانیه منتظر می‌مونه تصویر از صفحه بره (مثلاً پنجره‌ای بسته بشه)."""
+    end = time.time() + timeout
+    while True:
+        if not is_visible(label):
+            return True
+        if time.time() >= end:
+            return False
+        time.sleep(interval)

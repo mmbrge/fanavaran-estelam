@@ -208,6 +208,125 @@ def paste_text(text: str, step_num: int):
     pyautogui.hotkey("ctrl", "v")
 
 
+SEARCH_TEMPLATES = ("search_dialog", "search_chip", "search_apply")
+
+
+def _grid_strip(left, top, grid_config):
+    """عکس خاکستری ستون «شماره الحاقیه» گرید (برای فهمیدن اینکه گرید عوض شده یا نه)."""
+    x1, x2 = left + grid_config["col_left"], left + grid_config["col_right"]
+    y1 = top + grid_config["col_top"]
+    y2 = top + grid_config.get("grid_bottom_y", grid_config["col_bottom"] + 20 * grid_config["row_height"])
+    return pyautogui.screenshot(region=(x1, y1, x2 - x1, y2 - y1)).convert("L")
+
+
+def _images_differ(a, b) -> bool:
+    from PIL import ImageChops
+    return ImageChops.difference(a, b).point(lambda v: 255 if v > 40 else 0).getbbox() is not None
+
+
+def wait_grid_updated(left, top, grid_config, before, timeout=12.0) -> str:
+    """
+    بعد از «اعمال»، منتظر می‌مونه گرید نسبت به قبل (before) عوض بشه و بعد ثابت بمونه
+    (یعنی نتیجه‌ی جستجو کامل لود شده). خروجی: "stable" / "changed" / "unchanged".
+    "unchanged" معمولاً یعنی نتیجه همون قبلیه (مثلاً همون بیمه‌گذار دوباره).
+    """
+    end = time.time() + timeout
+    prev, changed = None, False
+    while time.time() < end:
+        cur = _grid_strip(left, top, grid_config)
+        if not changed:
+            if _images_differ(before, cur):
+                changed, prev = True, cur
+        elif not _images_differ(prev, cur):
+            return "stable"
+        else:
+            prev = cur
+        time.sleep(0.6)
+    return "changed" if changed else "unchanged"
+
+
+def search_insurer(code: str, left: int, top: int, grid_config):
+    """
+    مرحله ۷: پنجره‌ی «جست و جو» (با Numpad − باز شده) → تایپ کد → انتخاب بیمه‌گذار از
+    لیست پیشنهاد → «اعمال» → صبر تا گرید نتیجه‌ی واقعی رو نشون بده.
+
+    به‌جای sleep ثابت، هر قدم با تصویرش تأیید می‌شه:
+        search_dialog = عنوان پنجره‌ی «جست و جو»   (باز شدن/بسته شدن پنجره)
+        search_chip   = دکمه‌ی ▾≡ و علامت × کنارش در فیلد «بیمه گذار» (یعنی بیمه‌گذار
+                        از لیست انتخاب شده)؛ نقطه‌ی کلیکش روی × (برای پاک کردن انتخاب قبلی)
+        search_apply  = دکمه‌ی «اعمال»
+    اگه این تصاویر ساخته نشده باشن، روش قدیمی (دو Enter با مکث ثابت) اجرا می‌شه.
+    """
+    code_typed = to_western_digits(code)
+    missing = [t for t in SEARCH_TEMPLATES if not screen_locator.has_template(t)]
+    if missing:
+        print(f"  ⚠ تصاویر {', '.join(missing)} ساخته نشده؛ جستجو با روش قدیمی (بدون تأیید) انجام می‌شه.")
+        time.sleep(2.0)
+        pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.2)
+        pyautogui.typewrite(code_typed, interval=0.05)
+        print(f"  [مرحله 7] تایپ کد: {code}")
+        time.sleep(1.0)
+        pyautogui.press("enter")
+        time.sleep(1.0)
+        pyautogui.press("enter")
+        time.sleep(1.0)
+        return
+
+    if not screen_locator.wait_visible("search_dialog", 10):
+        raise StepError(7, "پنجره‌ی «جست و جو» بعد از زدن Numpad − باز نشد.")
+    time.sleep(0.3)
+
+    # اگه از جستجوی قبلی هنوز یه بیمه‌گذار انتخاب‌شده (چیپ) مونده، اول پاکش کن؛
+    # وگرنه تأیید «چیپ ظاهر شد» الکی درست درمیاد.
+    if screen_locator.is_visible("search_chip"):
+        x, y, _ = screen_locator.locate("search_chip", timeout=1)
+        pyautogui.click(x, y)
+        print("  [مرحله 7] بیمه‌گذار انتخاب‌شده‌ی قبلی پاک شد")
+        if not screen_locator.wait_gone("search_chip", 4):
+            raise StepError(7, "بیمه‌گذار انتخاب‌شده‌ی قبلی توی پنجره‌ی جستجو پاک نشد.")
+
+    pyautogui.hotkey("ctrl", "a")
+    time.sleep(0.2)
+    pyautogui.typewrite(code_typed, interval=0.05)
+    print(f"  [مرحله 7] تایپ کد: {code}")
+
+    # Enter اول بیمه‌گذار رو از لیست پیشنهاد انتخاب می‌کنه؛ اما اگه لیست هنوز از سرور
+    # نرسیده باشه، Enter هدر می‌ره. پس تا ظاهر شدن چیپ صبر و در صورت نیاز تکرار.
+    selected = False
+    for attempt in range(1, 3):
+        time.sleep(1.5)  # فرصت لود شدن لیست پیشنهاد
+        pyautogui.press("enter")
+        if screen_locator.wait_visible("search_chip", 4):
+            selected = True
+            break
+        if not screen_locator.is_visible("search_dialog"):
+            raise StepError(7, "پنجره‌ی جستجو قبل از انتخاب بیمه‌گذار بسته شد (فیلتر ممکنه با متن خام اعمال شده باشه).")
+        print(f"  ⏳ بیمه‌گذار هنوز از لیست انتخاب نشده (تلاش {attempt})...")
+    if not selected:
+        raise StepError(7, f"بیمه‌گذار با کد {code} از لیست پیشنهاد انتخاب نشد. کد توی فناوران درسته؟")
+    print("  [مرحله 7] ✅ بیمه‌گذار از لیست انتخاب شد")
+
+    before = _grid_strip(left, top, grid_config) if grid_config else None
+    try:
+        x, y, _ = screen_locator.locate("search_apply", timeout=5)
+    except LookupError as e:
+        raise StepError(7, str(e))
+    pyautogui.click(x, y)
+    if not screen_locator.wait_gone("search_dialog", 10):
+        raise StepError(7, "بعد از زدن «اعمال»، پنجره‌ی جستجو بسته نشد.")
+    print("  [مرحله 7] ✅ «اعمال» زده شد و پنجره‌ی جستجو بسته شد")
+
+    if before is not None:
+        status = wait_grid_updated(left, top, grid_config, before)
+        if status == "stable":
+            print("  [مرحله 7] ✅ نتیجه‌ی جستجو توی گرید لود شد")
+        elif status == "changed":
+            print("  ⚠ گرید عوض شد ولی هنوز ثابت نشده؛ مرحله‌ی ۸ در صورت نیاز دوباره می‌خونه.")
+        else:
+            print("  ⚠ گرید بعد از «اعمال» تغییری نکرد (شاید نتیجه همون قبلیه).")
+
+
 def find_person_folder(name: str) -> str:
     year, month = current_persian_year_month()
     safe_name = sanitize_folder_name(name) or "بدون-نام"
@@ -257,26 +376,8 @@ def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: s
     pyautogui.press("subtract")
     print("  [کلید] Subtract (Numpad -) زده شد -> پنجره جستجو باید باز شده باشه")
 
-    # مرحله ۷: تایپ مستقیم کد (نه پیست) توی فیلد جستجو
-    # چون فناوران کنترل‌های سفارشی‌رندرشده داره، احتمال زیاد میان‌بر Ctrl+V رو
-    # نمی‌شناسه. تایپ مستقیم کلید‌به‌کلید مطمئن‌تره چون از کیبورد واقعی تقلید
-    # می‌کنه، نه از کلیپ‌بورد سیستم. فرض بر اینه که پنجره‌ی جستجو خودش input رو
-    # فوکوس‌شده باز می‌کنه (معمول برای پنجره‌های quick-search). اگه اینطور نبود
-    # و تایپ بازم جای اشتباه رفت، باید یه نقطه‌ی کلیک جدید برای همین فیلد
-    # کالیبره کنیم (بگو تا اضافه کنم).
-    time.sleep(2.0)
-
-    pyautogui.hotkey("ctrl", "a")  # هر متن قبلی توی فیلد پاک بشه
-    time.sleep(0.2)
-    # کد همیشه عدد لاتینه (extract_code نرمال کرده)، پس typewrite امنه؛ اما اگه
-    # ورودی به هر دلیلی رقم فارسی داشت، to_western_digits دوباره تضمینش می‌کنه.
-    pyautogui.typewrite(to_western_digits(code), interval=0.05)
-    print(f"  [مرحله 7] تایپ کد: {code}")
-    time.sleep(1.0)
-    pyautogui.press("enter")
-    time.sleep(1.0)
-    pyautogui.press("enter")
-    time.sleep(1.0)
+    # مرحله ۷: جستجوی بیمه‌گذار (با تأیید هر قدم اگه تصاویر search_* ساخته شده باشن)
+    search_insurer(code, left, top, coords.get("grid"))
 
     # مرحله ۸: پیدا کردن آخرین ردیف با مقدار 0 (OCR)
     grid_config = coords.get("grid")
@@ -399,6 +500,7 @@ def main():
 
     coords = load_coords()
     with_templates = [str(n) for n in range(1, 18) if screen_locator.has_template(str(n))]
+    with_templates += [t for t in SEARCH_TEMPLATES + ("status_ok",) if screen_locator.has_template(t)]
     if with_templates:
         print(f"🖼 مراحلی که با تصویر پیدا می‌شن (بدون مختصات): {', '.join(with_templates)}")
         if not screen_locator.available():
