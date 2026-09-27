@@ -53,6 +53,69 @@ def get_process_exe(pid: int):
         return None
 
 
+def _walk_descendants(wrapper, max_depth: int, out):
+    """
+    fallback: درخت کنترل‌ها رو دستی پیمایش و چاپ می‌کنه. روی هر wrapper کار می‌کنه
+    (برخلاف print_control_identifiers که فقط روی WindowSpecification هست).
+    برای هر کنترل: نوع، نام، automation_id، کلاس و مستطیل (مختصات) رو می‌نویسه.
+    """
+    def line(ctrl, depth):
+        try:
+            info = ctrl.element_info
+            ctype = getattr(info, "control_type", "") or ""
+            name = getattr(info, "name", "") or ""
+            auto_id = getattr(info, "automation_id", "") or ""
+            cls = getattr(info, "class_name", "") or ""
+            rect = ctrl.rectangle()
+            return (f"{'  ' * depth}- [{ctype}] name={name!r} auto_id={auto_id!r} "
+                    f"class={cls!r} rect=({rect.left},{rect.top},{rect.right},{rect.bottom})")
+        except Exception as e:
+            return f"{'  ' * depth}- (خطا در خواندن کنترل: {e})"
+
+    def rec(ctrl, depth):
+        print(line(ctrl, depth), file=out)
+        if depth >= max_depth:
+            return
+        try:
+            children = ctrl.children()
+        except Exception:
+            return
+        for ch in children:
+            rec(ch, depth + 1)
+
+    rec(wrapper, 0)
+
+
+def dump_tree(app, wrapper, max_depth: int, out_file: str = None):
+    """
+    درخت کنترل‌های یه پنجره رو چاپ می‌کنه (یا توی فایل UTF-8 می‌نویسه).
+    نکته: app.windows()/desktop.windows() «wrapper» برمی‌گردونن که متد
+    print_control_identifiers ندارن؛ باید از app.window(handle=...) یه
+    WindowSpecification ساخت. اگه اون هم خطا داد، پیمایش دستی انجام می‌شه.
+    """
+    import io
+    buf = io.StringIO()
+    try:
+        spec = app.window(handle=wrapper.handle)
+        if out_file:
+            spec.print_control_identifiers(depth=max_depth, filename=out_file)
+            print(f"✅ درخت کنترل‌ها ذخیره شد: {out_file}")
+            return
+        spec.print_control_identifiers(depth=max_depth)
+        return
+    except Exception as e:
+        print(f"(print_control_identifiers جواب نداد: {e} — پیمایش دستی...)")
+
+    _walk_descendants(wrapper, max_depth, buf)
+    text = buf.getvalue()
+    if out_file:
+        with open(out_file, "w", encoding="utf-8") as f:
+            f.write(text)
+        print(f"✅ درخت کنترل‌ها ذخیره شد: {out_file}")
+    else:
+        print(text)
+
+
 def list_windows(backend: str = "uia"):
     """لیست عنوان + نام exe همه پنجره‌های سطح بالای باز روی دسکتاپ."""
     desktop = Desktop(backend=backend)
@@ -87,7 +150,7 @@ def find_all_pids_by_exe(exe_name: str):
     return pids
 
 
-def connect_by_process(exe_name: str, backend: str = "uia", max_depth: int = 6):
+def connect_by_process(exe_name: str, backend: str = "uia", max_depth: int = 6, out_file: str = None):
     """
     همه پروسه‌های exe_name رو پیدا می‌کنه (چون اپ‌های Electron/Chromium چندین پروسه با اسم
     یکسان دارن) و برای هرکدوم که پنجره داره، لیست پنجره‌ها + درخت کنترل رو چاپ می‌کنه.
@@ -132,7 +195,7 @@ def connect_by_process(exe_name: str, backend: str = "uia", max_depth: int = 6):
 
         print(f"\n--- درخت کنترل‌های پنجره '{main_win.window_text()}' (pid={pid}) ---\n")
         try:
-            main_win.print_control_identifiers(depth=max_depth)
+            dump_tree(app, main_win, max_depth, out_file)
         except Exception as e:
             print(f"خطا در چاپ درخت کنترل: {e}")
 
@@ -141,16 +204,16 @@ def connect_by_process(exe_name: str, backend: str = "uia", max_depth: int = 6):
         print("مطمئن شو Bime واقعاً باز و minimize نشده (نه توی tray).")
 
 
-def dump_by_hwnd(hwnd: int, backend: str = "uia", max_depth: int = 8):
+def dump_by_hwnd(hwnd: int, backend: str = "uia", max_depth: int = 8, out_file: str = None):
     """
     مستقیم با یه hwnd خام (که مثلاً از raw_enum_windows.py پیدا کردیم) به پنجره وصل
     می‌شه و درخت کنترل‌هاش رو چاپ می‌کنه. مطمئن‌ترین روش وقتی از قبل hwnd رو داریم.
     """
     try:
         app = Application(backend=backend).connect(handle=hwnd, timeout=5)
-        win = app.window(handle=hwnd)
+        win = app.window(handle=hwnd).wrapper_object()
         print(f"\n=== درخت کنترل‌های پنجره hwnd={hwnd} (backend={backend}) ===\n")
-        win.print_control_identifiers(depth=max_depth)
+        dump_tree(app, win, max_depth, out_file)
     except Exception as e:
         print(f"خطا در وصل شدن به hwnd={hwnd}: {e}")
         if backend == "uia":
@@ -158,7 +221,7 @@ def dump_by_hwnd(hwnd: int, backend: str = "uia", max_depth: int = 8):
 
 
 def dump_control_tree(title_substr: str = None, process_substr: str = None,
-                       backend: str = "uia", max_depth: int = 6):
+                       backend: str = "uia", max_depth: int = 6, out_file: str = None):
     """
     به پنجره‌ای که در عنوانش title_substr هست (یا نام exe‌اش process_substr رو داره) وصل
     می‌شه و درخت کنترل‌هاش رو چاپ می‌کنه. این خروجی رو نگه دار — برای نوشتن هر مرحله از
@@ -187,7 +250,8 @@ def dump_control_tree(title_substr: str = None, process_substr: str = None,
 
     print(f"\n=== درخت کنترل‌های پنجره: {target.window_text()!r} (backend={backend}) ===\n")
     try:
-        target.print_control_identifiers(depth=max_depth)
+        app = Application(backend=backend).connect(handle=target.handle, timeout=5)
+        dump_tree(app, target, max_depth, out_file)
     except Exception as e:
         print(f"خطا در چاپ درخت کنترل: {e}")
         print("اگه با uia جواب نداد، با --backend win32 دوباره امتحان کن.")
@@ -207,16 +271,18 @@ def main():
     parser.add_argument("--backend", type=str, default="uia", choices=["uia", "win32"],
                          help="نوع backend برای pywinauto (پیش‌فرض uia)")
     parser.add_argument("--depth", type=int, default=6, help="عمق درخت کنترل‌ها")
+    parser.add_argument("--out", type=str, default=None,
+                         help="ذخیره خروجی درخت کنترل‌ها در فایل UTF-8 (مثلاً tree.txt) — برای فرستادن راحت‌تره")
     args = parser.parse_args()
 
     if args.list:
         list_windows(backend=args.backend)
     elif args.hwnd:
-        dump_by_hwnd(args.hwnd, backend=args.backend, max_depth=args.depth)
+        dump_by_hwnd(args.hwnd, backend=args.backend, max_depth=args.depth, out_file=args.out)
     elif args.connect:
-        connect_by_process(args.connect, backend=args.backend, max_depth=args.depth)
+        connect_by_process(args.connect, backend=args.backend, max_depth=args.depth, out_file=args.out)
     elif args.title or args.process:
-        dump_control_tree(args.title, args.process, backend=args.backend, max_depth=args.depth)
+        dump_control_tree(args.title, args.process, backend=args.backend, max_depth=args.depth, out_file=args.out)
     else:
         print("یکی از --list یا --title یا --process یا --connect یا --hwnd رو بده. مثال:")
         print("  python inspect_window.py --list")
