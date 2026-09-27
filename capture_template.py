@@ -183,8 +183,17 @@ def main():
     shot = pyautogui.screenshot()
     print("📸 عکس گرفته شد. روی عکسی که باز شد دور دکمه کادر بکش؛ Enter = ذخیره، Esc = لغو.")
 
-    if Selector(shot, args.label).run():
+    selector = Selector(shot, args.label)
+    if selector.run():
         print(f"✅ ذخیره شد: {sl.template_path(args.label)}")
+        w, h = selector.box[2] - selector.box[0], selector.box[3] - selector.box[1]
+        if selector.click:
+            cx, cy = selector.click[0] - selector.box[0], selector.click[1] - selector.box[1]
+            print(f"🎯 نقطه‌ی کلیک: ({cx}, {cy}) داخل کادر {w}x{h} — همون جایی که کلیک کردی.")
+        else:
+            print(f"🎯 نقطه‌ی کلیک: وسط کادر ({w // 2}, {h // 2}) — چون روی نقطه‌ی خاصی کلیک نکردی.")
+            print("   اگه کلیک باید روی یه قسمت خاص باشه (مثلاً فقط ▼)، دوباره بساز و بعد از کشیدن کادر،")
+            print("   یه کلیک تکی (بدون کشیدن) روی همون نقطه بزن تا دایره‌ی سبز ظاهر بشه، بعد Enter.")
         check_unique(shot, args.label)
     else:
         print("لغو شد.")
