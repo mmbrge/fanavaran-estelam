@@ -96,40 +96,51 @@ class Selector:
         self.box = self.click = self.start = None
         self.set_status(INSTRUCTIONS)
 
+    # دو مرحله‌ی جدا: (۱) کشیدن کادر؛ (۲) بعد از اون، هر کلیکی (حتی با کمی لرزش دست
+    # یا کمی بیرون از کادر) فقط نقطه‌ی کلیک رو تعیین می‌کنه و کادر رو خراب نمی‌کنه.
+    # برای کشیدن دوباره‌ی کادر: کلیک راست.
+
     def on_press(self, e):
-        self.start = (e.x, e.y)
+        if self.box is None:
+            self.start = (e.x, e.y)
 
     def on_drag(self, e):
-        if self.start is None:
+        if self.box is not None or self.start is None:
             return
         if self.rect_id:
             self.canvas.delete(self.rect_id)
         self.rect_id = self.canvas.create_rectangle(*self.start, e.x, e.y, outline="red", width=2)
 
     def on_release(self, e):
+        if self.box is not None:
+            self.set_click(e.x, e.y)
+            return
         if self.start is None:
             return
         x1, y1 = self.start
         self.start = None
-        if abs(e.x - x1) < 5 and abs(e.y - y1) < 5:
-            # کلیک ساده (نه کشیدن) = انتخاب نقطه‌ی کلیک داخل کادر
-            if self.box and self.box[0] <= e.x <= self.box[2] and self.box[1] <= e.y <= self.box[3]:
-                self.click = (e.x, e.y)
-                if self.mark_id:
-                    self.canvas.delete(self.mark_id)
-                self.mark_id = self.canvas.create_oval(e.x - 5, e.y - 5, e.x + 5, e.y + 5,
-                                                       fill="lime", outline="black")
-                self.set_status("Click point set.  Enter = save   Right-click = restart")
-            if self.rect_id and not self.box:
+        if abs(e.x - x1) < 5 or abs(e.y - y1) < 5:
+            # خیلی کوچیک (احتمالاً یه کلیک اشتباهی) — کادر حساب نمی‌شه
+            if self.rect_id:
                 self.canvas.delete(self.rect_id)
                 self.rect_id = None
+            self.set_status("Box too small - drag a bigger box.  " + INSTRUCTIONS)
             return
         self.box = (min(x1, e.x), min(y1, e.y), max(x1, e.x), max(y1, e.y))
-        self.click = None
+        self.set_status("Box set.  Now CLICK the exact point to click (e.g. the x or the arrow).  "
+                        "Enter = save   Right-click = redraw box")
+
+    def set_click(self, x, y):
+        x1, y1, x2, y2 = self.box
+        # کلیک کمی بیرون از کادر (مثلاً × که لبه‌ی کادره) به داخل کادر کشیده می‌شه
+        x = min(max(x, x1), x2 - 1)
+        y = min(max(y, y1), y2 - 1)
+        self.click = (x, y)
         if self.mark_id:
             self.canvas.delete(self.mark_id)
-            self.mark_id = None
-        self.set_status("Box set.  Optional: click the exact click point inside it.  Enter = save")
+        self.mark_id = self.canvas.create_oval(x - 5, y - 5, x + 5, y + 5, fill="lime", outline="black")
+        self.set_status(f"Click point set at ({x - x1}, {y - y1}) inside the box.  "
+                        "Enter = save   (click again to move it)   Right-click = redraw box")
 
     def save(self):
         if not self.box:
