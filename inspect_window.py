@@ -94,12 +94,19 @@ def dump_tree(app, wrapper, max_depth: int, out_file: str = None):
     print_control_identifiers ندارن؛ باید از app.window(handle=...) یه
     WindowSpecification ساخت. اگه اون هم خطا داد، پیمایش دستی انجام می‌شه.
     """
+    import contextlib
     import io
     buf = io.StringIO()
     try:
         spec = app.window(handle=wrapper.handle)
         if out_file:
-            spec.print_control_identifiers(depth=max_depth, filename=out_file)
+            # پارامتر filename خود pywinauto با کدگذاری پیش‌فرض ویندوز (cp1252) می‌نویسه
+            # و روی متن فارسی خطای 'charmap' می‌ده؛ پس خروجی رو از stdout می‌گیریم و
+            # خودمون با UTF-8 ذخیره می‌کنیم.
+            with contextlib.redirect_stdout(buf):
+                spec.print_control_identifiers(depth=max_depth)
+            with open(out_file, "w", encoding="utf-8") as f:
+                f.write(buf.getvalue())
             print(f"✅ درخت کنترل‌ها ذخیره شد: {out_file}")
             return
         spec.print_control_identifiers(depth=max_depth)
