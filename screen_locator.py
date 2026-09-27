@@ -126,6 +126,16 @@ def locate(label: str, region=None, confidence=None, timeout=8.0, interval=0.3):
         score, loc = match(template, screen)
         best = max(best, score)
         if loc is not None and score >= conf:
+            # اگه همین تصویر جای دیگه‌ی صفحه هم هست، کلیک نکن: ممکنه روی دکمه‌ی
+            # اشتباه (مثلاً یه ▼ دیگه) بخوره. تصویر رو باید با متن کنارش دوباره ساخت.
+            if not meta.get("allow_multiple"):
+                others = count_other_matches(template, screen, loc, conf)
+                if others:
+                    raise LookupError(
+                        f"تصویر «{label}» مبهمه: {others + 1} جای صفحه پیدا شد و معلوم نیست کدوم درسته. "
+                        f"دوباره با capture_template.py --label {label} بساز و کادر رو بزرگ‌تر بگیر "
+                        f"(همراه متن/آیکون کنارش) تا یکتا بشه."
+                    )
             return ox + loc[0] + dx, oy + loc[1] + dy, score
         if time.time() >= end:
             raise LookupError(

@@ -136,6 +136,7 @@ def _save_debug_image(screenshot, marks):
 # اگه این تصویر ساخته نشده باشه، فقط شرط «الحاقیه = 0» اعمال می‌شه.
 STATUS_TEMPLATE_LABEL = "status_ok"
 STATUS_CONFIDENCE = 0.80
+STATUS_BAND_PAD = 6
 _status_warned = False
 
 
@@ -274,10 +275,12 @@ def read_grid_rows(window_rect, grid_config, max_rows=MAX_ROWS_TO_SCAN):
 
         status_ok = None
         if status_tpl is not None and text != "":
-            # نوار کامل همین ردیف (به عرض کل پنجره) — دقیقاً یه ردیف، تا وضعیت ردیف
-            # کناری اشتباهی حساب نشه
-            row_top = max(0, cell_top - (row_height - cell_height) // 2)
-            band = screen_gray[row_top:row_top + row_height, :]
+            # نوار همین ردیف (به عرض کل پنجره) + چند پیکسل حاشیه، تا اگه کالیبراسیون
+            # گرید کمی جابه‌جا باشه هم پیدا بشه؛ حاشیه کمتر از ارتفاع متن ردیف کناریه،
+            # پس وضعیت ردیف کناری اشتباهی حساب نمی‌شه.
+            row_top = cell_top - (row_height - cell_height) // 2
+            band_top = max(0, row_top - STATUS_BAND_PAD)
+            band = screen_gray[band_top:row_top + row_height + STATUS_BAND_PAD, :]
             score, _ = sl.match(status_tpl, band)
             status_ok = score >= STATUS_CONFIDENCE
 
