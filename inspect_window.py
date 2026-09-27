@@ -22,6 +22,7 @@ inspect_window.py
 """
 
 import argparse
+import os
 import sys
 
 try:
@@ -134,6 +135,13 @@ def list_windows(backend: str = "uia"):
             print(f"[{i}] (خطا در خواندن پنجره: {e})")
 
 
+def _safe_visible(w) -> bool:
+    try:
+        return w.is_visible()
+    except Exception:
+        return False
+
+
 def find_all_pids_by_exe(exe_name: str):
     """همه pidهایی که اسم exe‌شون شامل exe_name هست رو برمی‌گردونه (اپ‌های Electron/Chromium
     مثل Bime معمولاً چند پروسه با اسم یکسان دارن: یکی اصلی با پنجره، بقیه renderer/GPU/helper
@@ -150,7 +158,8 @@ def find_all_pids_by_exe(exe_name: str):
     return pids
 
 
-def connect_by_process(exe_name: str, backend: str = "uia", max_depth: int = 6, out_file: str = None):
+def connect_by_process(exe_name: str, backend: str = "uia", max_depth: int = 6, out_file: str = None,
+                       all_windows: bool = False):
     """
     همه پروسه‌های exe_name رو پیدا می‌کنه (چون اپ‌های Electron/Chromium چندین پروسه با اسم
     یکسان دارن) و برای هرکدوم که پنجره داره، لیست پنجره‌ها + درخت کنترل رو چاپ می‌کنه.
@@ -179,9 +188,25 @@ def connect_by_process(exe_name: str, backend: str = "uia", max_depth: int = 6, 
         print(f"\n=== [pid={pid}] {len(wins)} پنجره پیدا شد ===\n")
         for i, w in enumerate(wins):
             try:
-                print(f"  [{i}] عنوان: {w.window_text()!r}  |  کلاس: {w.friendly_class_name()}  |  visible: {w.is_visible()}")
+                print(f"  [{i}] عنوان: {w.window_text()!r}  |  کلاس: {w.friendly_class_name()}  |  "
+                      f"visible: {w.is_visible()}  |  hwnd: {w.handle}")
             except Exception as e:
                 print(f"  [{i}] (خطا: {e})")
+
+        if all_windows:
+            # همه‌ی پنجره‌های visible این پروسه (مثلاً پنجره‌ی PDF، پرینت، Save) جدا جدا
+            targets = [w for w in wins if _safe_visible(w)] or wins
+            for i, w in enumerate(targets):
+                win_out = None
+                if out_file:
+                    base, ext = os.path.splitext(out_file)
+                    win_out = f"{base}_{i}{ext or '.txt'}"
+                print(f"\n--- [{i}] درخت کنترل‌های پنجره '{w.window_text()}' (hwnd={w.handle}) ---\n")
+                try:
+                    dump_tree(app, w, max_depth, win_out)
+                except Exception as e:
+                    print(f"خطا در چاپ درخت کنترل: {e}")
+            continue
 
         main_win = None
         for w in wins:
@@ -271,6 +296,9 @@ def main():
     parser.add_argument("--backend", type=str, default="uia", choices=["uia", "win32"],
                          help="نوع backend برای pywinauto (پیش‌فرض uia)")
     parser.add_argument("--depth", type=int, default=6, help="عمق درخت کنترل‌ها")
+    parser.add_argument("--all-windows", action="store_true",
+                         help="با --connect: درخت همه‌ی پنجره‌های visible پروسه رو بگیر (PDF/پرینت/Save و ...)؛ "
+                              "با --out هر پنجره توی فایل جدا (tree_0.txt, tree_1.txt, ...) ذخیره می‌شه")
     parser.add_argument("--out", type=str, default=None,
                          help="ذخیره خروجی درخت کنترل‌ها در فایل UTF-8 (مثلاً tree.txt) — برای فرستادن راحت‌تره")
     args = parser.parse_args()
@@ -280,7 +308,8 @@ def main():
     elif args.hwnd:
         dump_by_hwnd(args.hwnd, backend=args.backend, max_depth=args.depth, out_file=args.out)
     elif args.connect:
-        connect_by_process(args.connect, backend=args.backend, max_depth=args.depth, out_file=args.out)
+        connect_by_process(args.connect, backend=args.backend, max_depth=args.depth, out_file=args.out,
+                           all_windows=args.all_windows)
     elif args.title or args.process:
         dump_control_tree(args.title, args.process, backend=args.backend, max_depth=args.depth, out_file=args.out)
     else:
