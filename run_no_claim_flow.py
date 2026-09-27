@@ -152,6 +152,8 @@ def focus_window(hwnd):
     time.sleep(0.3)
 
 
+STEP8_ATTEMPTS = 4       # چند بار گرید خونده بشه تا نتیجه‌ی جستجو لود بشه
+STEP8_RETRY_WAIT = 2.5   # فاصله‌ی بین تلاش‌ها (ثانیه)
 TEMPLATE_TIMEOUT = 8.0  # حداکثر صبر برای ظاهر شدن تصویر یه مرحله (مثلاً آیتم منو)
 
 
@@ -280,10 +282,22 @@ def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: s
     grid_config = coords.get("grid")
     if not grid_config:
         raise StepError(8, "بخش 'grid' توی coords.json نیست — اول calibrate_grid.py رو اجرا کن.")
-    print("  [مرحله 8] در حال خوندن ردیف‌های گرید با OCR...")
-    result = find_last_zero_row_with_scroll((left, top, right, bottom), grid_config, debug=debug)
+    # نتیجه‌ی جستجو گاهی دیرتر از sleepهای ثابت لود می‌شه و گرید قبلی (لیست
+    # ردیف‌های دیگه) هنوز روی صفحه‌ست؛ پس اگه ردیف هدف پیدا نشد، چند بار با فاصله
+    # دوباره می‌خونیم تا نتیجه‌ی واقعی لود بشه.
+    result = None
+    for attempt in range(1, STEP8_ATTEMPTS + 1):
+        print(f"  [مرحله 8] در حال خوندن ردیف‌های گرید با OCR... (تلاش {attempt}/{STEP8_ATTEMPTS})")
+        result = find_last_zero_row_with_scroll((left, top, right, bottom), grid_config, debug=debug)
+        if result is not None:
+            break
+        if attempt < STEP8_ATTEMPTS:
+            print(f"  ⏳ ردیف هدف پیدا نشد؛ شاید نتیجه‌ی جستجو هنوز لود نشده. "
+                  f"{STEP8_RETRY_WAIT:g} ثانیه صبر و دوباره...")
+            time.sleep(STEP8_RETRY_WAIT)
     if result is None:
-        raise StepError(8, "هیچ ردیفی با مقدار 0 پیدا نشد.")
+        raise StepError(8, f"بعد از {STEP8_ATTEMPTS} بار خوندن، ردیفی با الحاقیه = 0 و وضعیت "
+                           f"«ارسال به مالی» پیدا نشد.")
     row_idx, click_x, click_y = result
     pyautogui.click(click_x, click_y)
     print(f"  [مرحله 8] ردیف {row_idx} انتخاب شد -> ({click_x},{click_y})")
