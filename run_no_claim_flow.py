@@ -348,7 +348,7 @@ def find_person_folder(name: str) -> str:
 # ---------- فلوی اصلی ----------
 
 def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: str = "export",
-                progress: dict = None):
+                progress: dict = None, navigate: bool = True):
     """
     کل ۱۷ مرحله رو برای یه ردیف (یه کد بیمه‌گذار) اجرا می‌کنه.
     خطایی رخ بده، StepError با شماره مرحله raise می‌شه.
@@ -364,16 +364,23 @@ def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: s
     left, top, right, bottom = rect
     focus_window(hwnd)
 
-    # مراحل ۱ تا ۵ - هر کدوم ۱ ثانیه فاصله
-    for step_num in [1, 2, 3, 4, 5]:
-        click_point(coords, left, top, str(step_num), step_num)
-        time.sleep(1.0)
+    if navigate:
+        # مراحل ۱ تا ۵ (رسیدن به صفحه‌ی «صدور بیمه نامه بدنه») + F5 — فقط برای ردیف
+        # اول، یا بعد از خطا که معلوم نیست فناوران روی چه صفحه‌ایه. ردیف‌های بعدی چون
+        # مراحل ۱۴ تا ۱۷ فرم گزارش رو بستن و فیلتر رو پاک کردن، روی همین صفحه‌ان و
+        # مستقیم از مرحله‌ی ۶ شروع می‌کنن.
+        for step_num in [1, 2, 3, 4, 5]:
+            click_point(coords, left, top, str(step_num), step_num)
+            time.sleep(1.0)
 
-    # بعد از مرحله ۵: ۳ ثانیه صبر، F5، ۳ ثانیه صبر
-    time.sleep(3.0)
-    pyautogui.press("f5")
-    print("  [F5] رفرش صفحه")
-    time.sleep(3.0)
+        # بعد از مرحله ۵: ۳ ثانیه صبر، F5، ۳ ثانیه صبر
+        time.sleep(3.0)
+        pyautogui.press("f5")
+        print("  [F5] رفرش صفحه")
+        time.sleep(3.0)
+    else:
+        print("  ⏭ مراحل ۱ تا ۵ و F5 رد شدن (فناوران از ردیف قبل روی صفحه‌ی صدوره)")
+        time.sleep(1.0)
 
     # مرحله ۶: کلیک روی سلول ستون «بیمه گذار» برای انتخابش
     click_point(coords, left, top, "6", 6)
@@ -647,6 +654,9 @@ def main():
     failsafe_exc = getattr(pyautogui, "FailSafeException", ())
     done_rows, failed_rows = [], []
     consecutive_failures = 0
+    # آیا فناوران الان روی صفحه‌ی صدور (بعد از مراحل ۱۴ تا ۱۷ ردیف قبل) هست؟ فقط اون
+    # موقع ردیف بعدی می‌تونه مراحل ۱ تا ۵ رو رد کنه. بعد از هر خطا False می‌شه.
+    on_issue_page = False
     if not args.confirm:
         print(f"▶ اجرای خودکار همه‌ی ردیف‌ها (بدون تأیید). هر ردیف در صورت خطا تا {max_attempts} بار "
               f"از اول انجام می‌شه. توقف اضطراری: موس رو ببر گوشه‌ی بالا-چپ صفحه.")
@@ -671,8 +681,10 @@ def main():
                     print(f"  🔁 تکرار ردیف از مرحله‌ی ۱ (تلاش {attempt}/{max_attempts})...")
                 try:
                     folder = run_one_row(coords, row.code, row.name or "", debug=args.debug,
-                                         print_mode=args.print_mode, progress=progress)
+                                         print_mode=args.print_mode, progress=progress,
+                                         navigate=not on_issue_page)
                     last_error = None
+                    on_issue_page = True
                     break
                 except failsafe_exc:
                     raise
@@ -681,6 +693,7 @@ def main():
                 except Exception as e:
                     last_error = StepError("x", f"خطای غیرمنتظره: {e}")
 
+                on_issue_page = False  # بعد از خطا صفحه معلوم نیست؛ تلاش بعدی از مرحله‌ی ۱
                 save_error_screenshot(row.row_index, last_error.step, attempt)
                 print(f"  ❌ تلاش {attempt}/{max_attempts} — خطا در مرحله {last_error.step}: {last_error.message}")
                 if last_error.step == 0:
