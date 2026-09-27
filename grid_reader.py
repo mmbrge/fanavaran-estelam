@@ -3,7 +3,8 @@
 grid_reader.py
 ===============
 با استفاده از مختصات کالیبره‌شده در calibrate_grid.py، هر ردیف ستون «شماره
-الحاقیه» رو با OCR می‌خونه و آخرین ردیفی که مقدارش 0 هست رو پیدا می‌کنه.
+الحاقیه» رو با OCR می‌خونه و آخرین ردیفی که مقدارش 0 هست و وضعیتش «ارسال به
+مالی» هست (تصویر templates/status_ok.png) رو پیدا می‌کنه.
 
 موتور OCR: pytesseract (پیش‌فرض، نیازمند نصب جداگانه‌ی Tesseract-OCR با زبان
 فارسی: https://github.com/UB-Mannheim/tesseract/wiki) یا PaddleOCR
@@ -128,6 +129,46 @@ def _save_debug_image(screenshot, marks):
         print(f"  ⚠ ذخیره‌ی عکس عیب‌یابی نشد: {e}")
 
 
+# تشخیص «وضعیت» ردیف از روی تصویر (نه OCR متن فارسی): یه‌بار با
+#     python capture_template.py --label status_ok
+# دور متن «ارسال به مال...» توی ستون وضعیت کادر بکش. بعد برای هر ردیف چک می‌شه
+# این تصویر توی نوار همون ردیف هست یا نه (به جای ستون وضعیت وابسته نیست).
+# اگه این تصویر ساخته نشده باشه، فقط شرط «الحاقیه = 0» اعمال می‌شه.
+STATUS_TEMPLATE_LABEL = "status_ok"
+STATUS_CONFIDENCE = 0.80
+_status_warned = False
+
+
+def _load_status_template():
+    """خاکستری تصویر وضعیت «ارسال به مالی»، یا None اگه ساخته نشده/opencv نیست."""
+    global _status_warned
+    try:
+        import screen_locator as sl
+    except Exception:
+        sl = None
+    if sl is None or not sl.has_template(STATUS_TEMPLATE_LABEL):
+        if not _status_warned:
+            print("  ⚠ تصویر وضعیت «ارسال به مالی» ساخته نشده (capture_template.py --label status_ok)؛"
+                  " ردیف فقط با شرط الحاقیه = 0 انتخاب می‌شه.")
+            _status_warned = True
+        return None, None
+    if not sl.available():
+        if not _status_warned:
+            print("  ⚠ opencv-python نصب نیست؛ وضعیت ردیف‌ها چک نمی‌شه (pip install opencv-python).")
+            _status_warned = True
+        return None, None
+    return sl, sl._load_gray(sl.template_path(STATUS_TEMPLATE_LABEL))
+
+
+def is_target_row(text, status_ok) -> bool:
+    """ردیف هدف: الحاقیه = 0 و (اگه تصویر وضعیت داریم) وضعیت = ارسال به مالی."""
+    return text == "0" and status_ok is not False
+
+
+def _status_str(status_ok) -> str:
+    return {True: "ارسال به مالی ✓", False: "وضعیت دیگر ✗", None: "?"}[status_ok]
+
+
 EMPTY_ROWS_TO_STOP = 3  # اگه این‌همه ردیف پشت‌سرهم خالی بود، یعنی به ته گرید رسیدیم
 MAX_SCROLL_PASSES = 15  # سقف تعداد اسکرول برای جلوگیری از حلقه بی‌نهایت
 SCROLL_BURSTS_PER_PASS = 3  # چندتا scroll(-15) پشت‌سرهم بزنیم (تشخیص همپوشانی خودش تکراری‌ها رو مدیریت می‌کنه)
@@ -206,6 +247,9 @@ def read_grid_rows(window_rect, grid_config, max_rows=MAX_ROWS_TO_SCAN):
     # مرز واقعی پایین گرید (قبل از فوتر/اسکرول‌بار)؛ اگه کالیبره نشده بود، کل پنجره
     grid_bottom_y = grid_config.get("grid_bottom_y", bottom - top)
 
+    sl, status_tpl = _load_status_template()
+    screen_gray = sl.to_gray(screenshot) if status_tpl is not None else None
+
     results = []
     marks = []
     consecutive_empty = 0
@@ -228,13 +272,23 @@ def read_grid_rows(window_rect, grid_config, max_rows=MAX_ROWS_TO_SCAN):
         abs_click_x = left + row_click_x
         abs_click_y = top + col_top0 + row_idx * row_height + row_click_y_offset
 
+        status_ok = None
+        if status_tpl is not None and text != "":
+            # نوار کامل همین ردیف (به عرض کل پنجره) — دقیقاً یه ردیف، تا وضعیت ردیف
+            # کناری اشتباهی حساب نشه
+            row_top = max(0, cell_top - (row_height - cell_height) // 2)
+            band = screen_gray[row_top:row_top + row_height, :]
+            score, _ = sl.match(status_tpl, band)
+            status_ok = score >= STATUS_CONFIDENCE
+
         if text == "":
             consecutive_empty += 1
         else:
             consecutive_empty = 0
 
-        results.append((row_idx, text, abs_click_x, abs_click_y))
-        marks.append((crop_box, text, (abs_click_x - left, abs_click_y - top)))
+        results.append((row_idx, text, abs_click_x, abs_click_y, status_ok))
+        label = text if status_ok is None else f"{text}{'+' if status_ok else 'x'}"
+        marks.append((crop_box, label, (abs_click_x - left, abs_click_y - top)))
 
         if consecutive_empty >= EMPTY_ROWS_TO_STOP:
             # چندتا ردیف خالی پشت‌سرهم یعنی به انتهای داده‌ها رسیدیم
@@ -252,10 +306,10 @@ def find_last_zero_row(window_rect, grid_config, max_rows=MAX_ROWS_TO_SCAN, debu
 
     if debug:
         print(f"  {len(rows)} ردیف اسکن شد:")
-        for row_idx, text, x, y in rows:
-            print(f"    ردیف {row_idx}: OCR='{text}'  ({x},{y})")
+        for row_idx, text, x, y, status_ok in rows:
+            print(f"    ردیف {row_idx}: OCR='{text}'  وضعیت={_status_str(status_ok)}  ({x},{y})")
 
-    zero_rows = [(idx, x, y) for idx, text, x, y in rows if text == "0"]
+    zero_rows = [(idx, x, y) for idx, text, x, y, st in rows if is_target_row(text, st)]
     if not zero_rows:
         return None
     return zero_rows[-1]  # آخرین ردیفی که صفره
@@ -294,7 +348,7 @@ def find_overlap(prev_texts, new_texts):
 
 def find_last_zero_row_with_scroll(window_rect, grid_config, debug=True):
     """
-    آخرین ردیفی که مقدارش 0 هست رو پیدا می‌کنه، با اسکرول تطبیقی: اگه همون پاس
+    آخرین ردیف هدف (الحاقیه = 0 و وضعیت = ارسال به مالی) رو پیدا می‌کنه، با اسکرول تطبیقی: اگه همون پاس
     اول به ته داده‌ها رسیده باشه اصلاً اسکرول نمی‌کنه؛ وگرنه هر پاس محتوای جدید
     رو با پاس قبلی مقایسه می‌کنه (تشخیص همپوشانی) تا هیچ ردیفی نه دوبار پردازش
     بشه نه جا بمونه. مختصات کلیک همیشه برای وضعیت *فعلی* اسکرول معتبره.
@@ -304,26 +358,27 @@ def find_last_zero_row_with_scroll(window_rect, grid_config, debug=True):
     hover_y = top + grid_config["col_top"] + grid_config["row_height"] * 3
 
     all_rows = []  # لیست دیده‌بان کل (بدون تکرار): (global_idx, text, click_x, click_y)
+    _load_status_template()  # هشدار نبود تصویر وضعیت همون اول (یه‌بار) چاپ بشه
     prev_texts = []
     best_zero = None  # (global_idx, click_x, click_y)
     pass_idx = 0
 
     while pass_idx < MAX_SCROLL_PASSES:
         rows, reached_end = read_grid_rows_with_end_flag(window_rect, grid_config)
-        pass_texts = [text for _, text, _, _ in rows]
+        pass_texts = [(text, st) for _, text, _, _, st in rows]
 
         overlap = find_overlap(prev_texts, pass_texts) if prev_texts else 0
         new_rows = rows[overlap:]
 
         if debug:
             print(f"  --- پاس {pass_idx}: {len(rows)} ردیف دیده شد، {overlap} تا مشترک، {len(new_rows)} تا جدید ---")
-            for _, text, _, _ in new_rows:
-                print(f"    جدید: OCR='{text}'")
+            for _, text, _, _, st in new_rows:
+                print(f"    جدید: OCR='{text}'  وضعیت={_status_str(st)}")
 
-        for _, text, cx, cy in new_rows:
+        for _, text, cx, cy, st in new_rows:
             global_idx = len(all_rows)
             all_rows.append((global_idx, text, cx, cy))
-            if text == "0":
+            if is_target_row(text, st):
                 best_zero = (global_idx, cx, cy)
 
         prev_texts = pass_texts
@@ -367,7 +422,7 @@ def find_last_zero_row_with_scroll(window_rect, grid_config, debug=True):
         rows, _ = read_grid_rows_with_end_flag(window_rect, grid_config)
         # دنبال ردیفی با همون متن '0' که به‌ترتیب با global_idx فاصله منطقی داره بگرد؛
         # ساده‌ترین حالت قابل‌اعتماد: آخرین ردیف صفر توی همین دید فعلی
-        zero_rows_now = [(idx, x, y) for idx, text, x, y in rows if text == "0"]
+        zero_rows_now = [(idx, x, y) for idx, text, x, y, st in rows if is_target_row(text, st)]
         if zero_rows_now:
             _, click_x, click_y = zero_rows_now[-1]
 
