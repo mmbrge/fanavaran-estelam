@@ -510,6 +510,18 @@ def main():
         print("❌ فایل اکسل الان توی Excel بازه (یا قفله). اول ببندش، بعد دوباره اجرا کن.")
         return
 
+    # اگه فقط بعضی فایل‌ها به‌روز شده باشن، وسط کار با AttributeError از کار می‌افته؛
+    # پس همین اول چک می‌کنیم فایل‌های کمکی با این نسخه هماهنگ باشن.
+    stale = []
+    if not all(hasattr(screen_locator, f) for f in ("locate", "is_visible", "wait_visible", "wait_gone")):
+        stale.append("screen_locator.py")
+    if not hasattr(grid_reader, "is_target_row"):
+        stale.append("grid_reader.py")
+    if stale:
+        print(f"❌ این فایل‌ها قدیمی‌ان و با run_no_claim_flow.py جور نیستن: {', '.join(stale)}")
+        print("   همه‌ی فایل‌های .py رو از گیت‌هاب به‌روز کن (coords.json و پوشه‌ی templates رو دست نزن).")
+        return
+
     coords = load_coords()
     with_templates = [str(n) for n in range(1, 18) if screen_locator.has_template(str(n))]
     with_templates += [t for t in SEARCH_TEMPLATES + SEARCH_OPTIONAL_TEMPLATES + ("status_ok",)
