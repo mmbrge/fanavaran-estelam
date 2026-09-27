@@ -15,3 +15,6 @@ pyperclip>=1.11.0     # لازم: پیست مسیرِ فارسیِ ذخیره‌
 # نکته: علاوه بر pip، باید این دو رو جدا روی ویندوز نصب کنی:
 # 1) Tesseract-OCR  -> https://github.com/UB-Mannheim/tesseract/wiki  (و زبان فارسی fas.traineddata رو هم اضافه کن)
 # 2) Poppler for Windows -> برای pdf2image لازمه (باید مسیرش به PATH اضافه بشه)
+
+# اختیاری: موتور OCR دوم برای مرحله ۸ (python run_no_claim_flow.py ... --ocr paddle)
+# pip install paddlepaddle paddleocr

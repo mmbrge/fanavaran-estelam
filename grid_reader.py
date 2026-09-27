@@ -5,8 +5,9 @@ grid_reader.py
 با استفاده از مختصات کالیبره‌شده در calibrate_grid.py، هر ردیف ستون «شماره
 الحاقیه» رو با OCR می‌خونه و آخرین ردیفی که مقدارش 0 هست رو پیدا می‌کنه.
 
-نیازمند: pytesseract + نصب جداگانه Tesseract-OCR روی ویندوز
-(https://github.com/UB-Mannheim/tesseract/wiki)
+موتور OCR: pytesseract (پیش‌فرض، نیازمند نصب جداگانه‌ی Tesseract-OCR با زبان
+فارسی: https://github.com/UB-Mannheim/tesseract/wiki) یا PaddleOCR
+(pip install paddlepaddle paddleocr) با OCR_ENGINE = "paddle".
 """
 
 import os
@@ -35,28 +36,67 @@ try:
 except ImportError:
     PaddleOCR = None
 
-# PaddleOCR 3.x عوض کردن API (.ocr -> .predict با خروجی متفاوت) رو مدام تغییر داده و
-# غیرقابل‌اعتماد شده؛ pytesseract با زبان فارسی دقت خوبی داد، پس فعلاً همینو اصلی می‌کنیم.
-USE_PADDLE = False
+# موتور OCR: "tesseract" (پیش‌فرض) یا "paddle". run_no_claim_flow.py با --ocr ستش می‌کنه.
+# اگه paddle انتخاب بشه ولی نصب نباشه یا خطا بده، خودکار به tesseract برمی‌گرده.
+OCR_ENGINE = "tesseract"
 
 _paddle_instance = None
+_paddle_failed = False
 
 
 def _get_paddle_ocr():
-    """یه نمونه PaddleOCR می‌سازه (فقط بار اول - بارگذاری مدل کندتره، بارهای بعدی سریع)."""
+    """
+    یه نمونه PaddleOCR می‌سازه (فقط بار اول؛ بارگذاری مدل کنده، بارهای بعد سریع).
+    هم API نسخه‌ی 3.x رو پشتیبانی می‌کنه هم 2.x. زبان: اول فارسی (fa)، بعد عربی (ar).
+    """
     global _paddle_instance
-    if _paddle_instance is None:
-        print("  ⏳ بارگذاری مدل PaddleOCR (فقط بار اول کند است)...")
-        try:
-            # نسخه‌های جدید (3.x): show_log حذف شده، use_angle_cls -> use_textline_orientation
-            _paddle_instance = PaddleOCR(use_textline_orientation=False, lang="ar")
-        except TypeError:
+    if _paddle_instance is not None:
+        return _paddle_instance
+    print("  ⏳ بارگذاری مدل PaddleOCR (فقط بار اول کند است)...")
+    last_error = None
+    for lang in ("fa", "ar"):
+        for kwargs in (
+            # 3.x: ماژول‌های چرخش سند/خط لازم نیست (سلول‌ها صاف و کوچیکن)
+            dict(lang=lang, use_doc_orientation_classify=False, use_doc_unwarping=False,
+                 use_textline_orientation=False),
+            # 2.x
+            dict(lang=lang, use_angle_cls=False, show_log=False),
+            dict(lang=lang),
+        ):
             try:
-                # نسخه‌های قدیمی‌تر
-                _paddle_instance = PaddleOCR(use_angle_cls=False, lang="ar", show_log=False)
-            except TypeError:
-                _paddle_instance = PaddleOCR(lang="ar")
-    return _paddle_instance
+                _paddle_instance = PaddleOCR(**kwargs)
+                print(f"  ✅ PaddleOCR آماده شد (lang={lang})")
+                return _paddle_instance
+            except Exception as e:  # TypeError برای آرگومان ناشناخته، یا زبان پشتیبانی‌نشده
+                last_error = e
+    raise RuntimeError(f"PaddleOCR ساخته نشد: {last_error}")
+
+
+def _paddle_read_text(image) -> str:
+    """متن یه تصویر رو با PaddleOCR می‌خونه (3.x: predict، 2.x: ocr)."""
+    ocr = _get_paddle_ocr()
+    arr = np.array(image)[:, :, ::-1].copy()  # RGB -> BGR (قرارداد paddle/opencv)
+
+    if hasattr(ocr, "predict"):  # 3.x
+        texts = []
+        for res in ocr.predict(arr) or []:
+            try:
+                rec = res["rec_texts"]
+            except Exception:
+                rec = res.json.get("res", {}).get("rec_texts", [])
+            texts.extend(rec or [])
+        return "".join(texts)
+
+    # 2.x: فقط تشخیص متن (بدون det) چون تصویر خودش یه سلوله
+    try:
+        result = ocr.ocr(arr, det=False, cls=False)
+    except TypeError:
+        result = ocr.ocr(arr, det=False)
+    if result and result[0]:
+        first = result[0][0]
+        return first[0] if isinstance(first, (list, tuple)) else str(first)
+    return ""
+
 
 MAX_ROWS_TO_SCAN = 60
 
@@ -86,6 +126,8 @@ def _save_debug_image(screenshot, marks):
         print(f"  🖼 عکس عیب‌یابی گرید: {path}")
     except Exception as e:
         print(f"  ⚠ ذخیره‌ی عکس عیب‌یابی نشد: {e}")
+
+
 EMPTY_ROWS_TO_STOP = 3  # اگه این‌همه ردیف پشت‌سرهم خالی بود، یعنی به ته گرید رسیدیم
 MAX_SCROLL_PASSES = 15  # سقف تعداد اسکرول برای جلوگیری از حلقه بی‌نهایت
 SCROLL_BURSTS_PER_PASS = 3  # چندتا scroll(-15) پشت‌سرهم بزنیم (تشخیص همپوشانی خودش تکراری‌ها رو مدیریت می‌کنه)
@@ -104,28 +146,26 @@ def normalize_digits(text: str) -> str:
 def ocr_digits(image):
     """
     یه تصویر (PIL Image، از قبل crop شده روی یه سلول تکی) رو OCR می‌کنه و فقط
-    ارقام (لاتین‌شده) رو برمی‌گردونه. اول با PaddleOCR (دقت بهتر برای فارسی)،
-    اگه نصب نبود، fallback به pytesseract.
+    ارقام (لاتین‌شده) رو برمی‌گردونه. با موتور OCR_ENGINE؛ اگه paddle انتخاب شده
+    ولی نصب نیست یا خطا بده، fallback به pytesseract.
     """
     # سلول‌های گرید معمولاً خیلی کوچیکن (۷۰x۳۷ پیکسل)؛ بزرگ‌نمایی + کنتراست دقت رو زیاد می‌کنه
     scale = 4
     image = image.resize((image.width * scale, image.height * scale))
     image = ImageOps.autocontrast(image.convert("L")).convert("RGB")
 
-    if USE_PADDLE and PaddleOCR is not None:
-        try:
-            ocr = _get_paddle_ocr()
-            img_array = np.array(image)
+    global _paddle_failed
+    if OCR_ENGINE == "paddle" and not _paddle_failed:
+        if PaddleOCR is None:
+            print("  ⚠ PaddleOCR نصب نیست (pip install paddlepaddle paddleocr) — از pytesseract استفاده می‌شه.")
+            _paddle_failed = True
+        else:
             try:
-                result = ocr.ocr(img_array, det=False, cls=False)
-            except TypeError:
-                result = ocr.ocr(img_array, det=False)
-            raw_text = ""
-            if result and result[0]:
-                raw_text = result[0][0][0]
-            return normalize_digits(raw_text)
-        except Exception as e:
-            print(f"  ⚠ PaddleOCR خطا داد ({e})، فالبک به pytesseract...")
+                return normalize_digits(_paddle_read_text(image))
+            except Exception as e:
+                # یه‌بار خطا بده، بقیه‌ی اجرا مستقیم tesseract (تا برای هر سلول تکرار نشه)
+                print(f"  ⚠ PaddleOCR خطا داد ({e}) — بقیه‌ی اجرا با pytesseract.")
+                _paddle_failed = True
 
     if pytesseract is not None:
         config = "--psm 7 -c tessedit_char_whitelist=۰۱۲۳۴۵۶۷۸۹0123456789"

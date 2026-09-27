@@ -345,6 +345,9 @@ def main():
                          help="ذخیره‌ی PDF: 'export' = دکمه‌ی Export To PDF بدون مختصات (پیش‌فرض)، "
                               "'print' = پرینت با Microsoft Print to PDF بدون مختصات، "
                               "'coords' = روش قدیمی با نقاط ۱۱ تا ۱۳")
+    parser.add_argument("--ocr", choices=["tesseract", "paddle"], default="tesseract",
+                         help="موتور OCR برای خوندن گرید (مرحله ۸). paddle نیاز به "
+                              "pip install paddlepaddle paddleocr داره؛ اگه جواب نده، خودکار tesseract.")
     parser.add_argument("--debug", action="store_true",
                          help="چاپ جزئیات OCR گرید (برای عیب‌یابی مرحله ۸)")
     args = parser.parse_args()
@@ -362,6 +365,7 @@ def main():
         return
 
     coords = load_coords()
+    grid_reader.OCR_ENGINE = args.ocr
     if args.debug:
         grid_reader.DEBUG_DIR = DEBUG_DIR
 
