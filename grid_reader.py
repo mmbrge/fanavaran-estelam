@@ -59,6 +59,33 @@ def _get_paddle_ocr():
     return _paddle_instance
 
 MAX_ROWS_TO_SCAN = 60
+
+# اگه مقدار بگیره (run_no_claim_flow.py با --debug ستش می‌کنه)، از هر پاس خوندن
+# گرید یه عکس علامت‌گذاری‌شده ذخیره می‌شه: کادر قرمز = ناحیه‌ای که OCR می‌خونه،
+# نقطه‌ی سبز = جایی که برای انتخاب ردیف کلیک می‌شه، عدد کنارش = نتیجه‌ی OCR.
+DEBUG_DIR = None
+_debug_counter = 0
+
+
+def _save_debug_image(screenshot, marks):
+    """marks: لیست (crop_box, text, click_xy) نسبت به گوشه‌ی پنجره."""
+    global _debug_counter
+    try:
+        from PIL import ImageDraw
+        os.makedirs(DEBUG_DIR, exist_ok=True)
+        img = screenshot.convert("RGB").copy()
+        draw = ImageDraw.Draw(img)
+        for box, text, (cx, cy) in marks:
+            draw.rectangle(box, outline=(255, 0, 0), width=2)
+            draw.ellipse((cx - 4, cy - 4, cx + 4, cy + 4), fill=(0, 200, 0))
+            label = text if text else "-"
+            draw.text((box[0] - 10 - 7 * len(label), box[1] + 4), label, fill=(255, 0, 0))
+        _debug_counter += 1
+        path = os.path.join(DEBUG_DIR, f"grid_{time.strftime('%H%M%S')}_{_debug_counter}.png")
+        img.save(path)
+        print(f"  🖼 عکس عیب‌یابی گرید: {path}")
+    except Exception as e:
+        print(f"  ⚠ ذخیره‌ی عکس عیب‌یابی نشد: {e}")
 EMPTY_ROWS_TO_STOP = 3  # اگه این‌همه ردیف پشت‌سرهم خالی بود، یعنی به ته گرید رسیدیم
 MAX_SCROLL_PASSES = 15  # سقف تعداد اسکرول برای جلوگیری از حلقه بی‌نهایت
 SCROLL_BURSTS_PER_PASS = 3  # چندتا scroll(-15) پشت‌سرهم بزنیم (تشخیص همپوشانی خودش تکراری‌ها رو مدیریت می‌کنه)
@@ -140,6 +167,7 @@ def read_grid_rows(window_rect, grid_config, max_rows=MAX_ROWS_TO_SCAN):
     grid_bottom_y = grid_config.get("grid_bottom_y", bottom - top)
 
     results = []
+    marks = []
     consecutive_empty = 0
 
     for row_idx in range(max_rows):
@@ -166,12 +194,15 @@ def read_grid_rows(window_rect, grid_config, max_rows=MAX_ROWS_TO_SCAN):
             consecutive_empty = 0
 
         results.append((row_idx, text, abs_click_x, abs_click_y))
+        marks.append((crop_box, text, (abs_click_x - left, abs_click_y - top)))
 
         if consecutive_empty >= EMPTY_ROWS_TO_STOP:
             # چندتا ردیف خالی پشت‌سرهم یعنی به انتهای داده‌ها رسیدیم
             results = results[: -EMPTY_ROWS_TO_STOP]
             break
 
+    if DEBUG_DIR:
+        _save_debug_image(screenshot, marks)
     return results
 
 

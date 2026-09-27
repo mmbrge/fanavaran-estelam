@@ -73,6 +73,7 @@ from excel_utils import (
     GREEN_FILL_ARGB,
     RED_FILL_ARGB,
 )
+import grid_reader
 from grid_reader import find_last_zero_row_with_scroll
 from folder_utils import current_persian_year_month, sanitize_folder_name
 
@@ -82,6 +83,7 @@ except ImportError:
     print_report_to_pdf = None
 
 COORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coords.json")
+DEBUG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug")
 TARGET_EXE = "Bime.exe"
 BASE_FOLDER = r"C:\Bime Ba Ma\فناوران اتومات\استعلام خسارت"
 
@@ -156,6 +158,19 @@ def click_point(coords, left, top, label, step_num):
     x, y = left + point["x"], top + point["y"]
     pyautogui.click(x, y)
     print(f"  [مرحله {step_num}] کلیک روی '{label}' -> ({x},{y})")
+
+
+def save_error_screenshot(excel_row: int, step) -> str:
+    """از کل صفحه در لحظه‌ی خطا عکس می‌گیره (پوشه‌ی debug) تا معلوم باشه کجا گیر کرد."""
+    try:
+        os.makedirs(DEBUG_DIR, exist_ok=True)
+        path = os.path.join(DEBUG_DIR, f"error_row{excel_row}_step{step}_{time.strftime('%H%M%S')}.png")
+        pyautogui.screenshot().save(path)
+        print(f"  🖼 عکس لحظه‌ی خطا: {path}")
+        return path
+    except Exception as e:
+        print(f"  ⚠ عکس خطا ذخیره نشد: {e}")
+        return ""
 
 
 def paste_text(text: str, step_num: int):
@@ -347,6 +362,8 @@ def main():
         return
 
     coords = load_coords()
+    if args.debug:
+        grid_reader.DEBUG_DIR = DEBUG_DIR
 
     # --- چک اندازه پنجره قبل از شروع ---
     # اگه اندازه‌ی پنجره الان با اندازه‌ی زمان کالیبراسیون فرق داشته باشه (یا DPI عوض
@@ -395,10 +412,12 @@ def main():
                          fill_argb=GREEN_FILL_ARGB, insurer_col_name=args.insurer_col)
             print(f"  ✅ موفق. ذخیره در: {folder}")
         except StepError as e:
+            save_error_screenshot(row.row_index, e.step)
             write_status(args.excel, row.row_index, f"خطا در مرحله {e.step}: {e.message}",
                          fill_argb=RED_FILL_ARGB, insurer_col_name=args.insurer_col)
             print(f"  ❌ خطا در مرحله {e.step}: {e.message}")
         except Exception as e:
+            save_error_screenshot(row.row_index, "x")
             write_status(args.excel, row.row_index, f"خطای غیرمنتظره: {e}",
                          fill_argb=RED_FILL_ARGB, insurer_col_name=args.insurer_col)
             print(f"  ❌ خطای غیرمنتظره: {e}")
