@@ -331,6 +331,17 @@ def save_pdf(app, pdf_path, dialog_timeout=40, file_timeout=60):
         raise PrintError("ذخیره", f"فایل PDF تا {file_timeout} ثانیه ساخته نشد: {pdf_path}")
 
 
+def report_viewer_open(hwnd) -> bool:
+    """آیا فرم «چاپ استعلام خسارت» (نمایشگر گزارش FastReport) الان بازه؟"""
+    if Application is None:
+        return False
+    try:
+        _, main = connect_main(hwnd)
+        return main.child_window(auto_id="FastReportViewerUserControl").exists(timeout=0)
+    except Exception:
+        return False
+
+
 def close_leftover_dialogs(hwnd) -> int:
     """
     بعد از خطا: هر پنجره‌ی باز مونده‌ی Bime.exe غیر از پنجره‌ی اصلی (پنجره‌ی Save،

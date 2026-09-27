@@ -79,10 +79,12 @@ from grid_reader import find_last_zero_row_with_scroll
 from folder_utils import current_persian_year_month, sanitize_folder_name
 
 try:
-    from pdf_printer import print_report_to_pdf, unique_pdf_path, PrintError, close_leftover_dialogs
+    from pdf_printer import (print_report_to_pdf, unique_pdf_path, PrintError, close_leftover_dialogs,
+                             report_viewer_open)
 except ImportError:
     print_report_to_pdf = None
     close_leftover_dialogs = None
+    report_viewer_open = None
 
 COORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coords.json")
 DEBUG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug")
@@ -474,10 +476,18 @@ def run_one_row(coords, code: str, name: str, debug: bool = False, print_mode: s
         if progress is not None and os.path.exists(full_path_no_ext + ".pdf"):
             progress["pdf_path"] = full_path_no_ext + ".pdf"
 
-    # مراحل ۱۴ تا ۱۷ - هر کدوم ۱ ثانیه فاصله
+    # مراحل ۱۴ تا ۱۷: بستن فرم گزارش و پاک کردن فیلتر بیمه‌گذار (برای ردیف بعدی)
+    #   ۱۴ = × کنار «چاپ استعلام خسارت بدنه»   ۱۵ = آیکون فیلتر بالای گرید
+    #   ۱۶ = «حذف همه فیلترها»                   ۱۷ = «اعمال»
     for step_num in [14, 15, 16, 17]:
         click_point(coords, left, top, str(step_num), step_num)
         time.sleep(1.0)
+        if step_num == 14 and report_viewer_open is not None:
+            end = time.time() + 10
+            while report_viewer_open(hwnd) and time.time() < end:
+                time.sleep(0.5)
+            if report_viewer_open(hwnd):
+                raise StepError(14, "فرم «چاپ استعلام خسارت» بعد از زدن × بسته نشد.")
 
     return person_folder
 
@@ -501,6 +511,18 @@ def recover_ui():
     for _ in range(3):
         pyautogui.press("esc")
         time.sleep(0.4)
+    # اگه فرم «چاپ استعلام خسارت» باز مونده، با همون × مرحله‌ی ۱۴ ببندش
+    if report_viewer_open is not None and report_viewer_open(hwnd):
+        if screen_locator.has_template("14"):
+            try:
+                x, y, _ = screen_locator.locate("14", timeout=3)
+                pyautogui.click(x, y)
+                print("  🔄 فرم «چاپ استعلام خسارت» بسته شد")
+                time.sleep(1.5)
+            except LookupError:
+                print("  ⚠ فرم «چاپ استعلام خسارت» بازه ولی × اون پیدا نشد.")
+        else:
+            print("  ⚠ فرم «چاپ استعلام خسارت» بازه؛ برای بستن خودکارش تصویر مرحله‌ی ۱۴ رو بساز.")
     if close_leftover_dialogs is not None:
         try:
             n = close_leftover_dialogs(hwnd)
