@@ -20,3 +20,6 @@ test.xlsx
 # ویندوز
 Thumbs.db
 desktop.ini
+
+# تصاویر مراحل مخصوص همون سیستم/تم هستن (با capture_template.py ساخته می‌شن)
+templates/

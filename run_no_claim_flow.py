@@ -74,6 +74,7 @@ from excel_utils import (
     RED_FILL_ARGB,
 )
 import grid_reader
+import screen_locator
 from grid_reader import find_last_zero_row_with_scroll
 from folder_utils import current_persian_year_month, sanitize_folder_name
 
@@ -151,7 +152,25 @@ def focus_window(hwnd):
     time.sleep(0.3)
 
 
+TEMPLATE_TIMEOUT = 8.0  # حداکثر صبر برای ظاهر شدن تصویر یه مرحله (مثلاً آیتم منو)
+
+
 def click_point(coords, left, top, label, step_num):
+    """
+    روی نقطه‌ی مرحله کلیک می‌کنه. اگه برای این مرحله تصویر ساخته شده باشه
+    (templates/<label>.png با capture_template.py)، دکمه رو از روی تصویر روی صفحه
+    پیدا می‌کنه (بدون مختصات، و تا ظاهر شدنش صبر می‌کنه)؛ وگرنه مختصات coords.json.
+    اگه تصویر هست ولی پیدا نشد، خطا می‌ده (کلیک کورکورانه روی مختصات خطرناکه).
+    """
+    if screen_locator.has_template(label):
+        try:
+            x, y, score = screen_locator.locate(label, timeout=TEMPLATE_TIMEOUT)
+        except LookupError as e:
+            raise StepError(step_num, str(e))
+        pyautogui.click(x, y)
+        print(f"  [مرحله {step_num}] کلیک روی تصویر '{label}' -> ({x},{y})  شباهت={score:.2f}")
+        return
+
     point = coords.get("points", {}).get(label)
     if point is None:
         raise StepError(step_num, f"نقطه‌ی '{label}' توی coords.json ثبت نشده.")
@@ -365,6 +384,12 @@ def main():
         return
 
     coords = load_coords()
+    with_templates = [str(n) for n in range(1, 18) if screen_locator.has_template(str(n))]
+    if with_templates:
+        print(f"🖼 مراحلی که با تصویر پیدا می‌شن (بدون مختصات): {', '.join(with_templates)}")
+        if not screen_locator.available():
+            print("❌ برای این مراحل opencv-python لازمه: pip install opencv-python numpy")
+            return
     grid_reader.OCR_ENGINE = args.ocr
     if args.debug:
         grid_reader.DEBUG_DIR = DEBUG_DIR

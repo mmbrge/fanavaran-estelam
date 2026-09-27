@@ -303,12 +303,21 @@ def main():
     parser.add_argument("--backend", type=str, default="uia", choices=["uia", "win32"],
                          help="نوع backend برای pywinauto (پیش‌فرض uia)")
     parser.add_argument("--depth", type=int, default=6, help="عمق درخت کنترل‌ها")
+    parser.add_argument("--delay", type=int, default=0,
+                         help="چند ثانیه صبر قبل از گرفتن خروجی (تا مثلاً منوی بازشو رو باز کنی)")
     parser.add_argument("--all-windows", action="store_true",
                          help="با --connect: درخت همه‌ی پنجره‌های visible پروسه رو بگیر (PDF/پرینت/Save و ...)؛ "
                               "با --out هر پنجره توی فایل جدا (tree_0.txt, tree_1.txt, ...) ذخیره می‌شه")
     parser.add_argument("--out", type=str, default=None,
                          help="ذخیره خروجی درخت کنترل‌ها در فایل UTF-8 (مثلاً tree.txt) — برای فرستادن راحت‌تره")
     args = parser.parse_args()
+
+    if args.delay:
+        import time
+        print(f"⏳ {args.delay} ثانیه وقت داری صفحه/منو رو آماده کنی...")
+        for i in range(args.delay, 0, -1):
+            print(f"  {i}...", flush=True)
+            time.sleep(1)
 
     if args.list:
         list_windows(backend=args.backend)
