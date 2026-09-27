@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# خروجی‌های محلی و موقت
+menu_screenshot.png
+*.log
+
+# فایل‌های اکسل واقعی مشتری‌ها (حاوی اطلاعات شخصی: کد ملی، موبایل، پلاک) —
+# اینها نباید توی مخزن گیت‌هاب آپلود بشن. فقط sample_data.xlsx نمونه‌ی ساختگیه.
+test.xlsx
+*.xlsx
+!sample_data.xlsx
+
+# ویندوز
+Thumbs.db
+desktop.ini

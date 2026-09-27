@@ -1,0 +1,17 @@
+# نصب با: pip install -r requirements.txt
+# (باید روی همون ویندوزی نصب بشه که فناوران روشه)
+
+pywinauto>=0.6.8      # کنترل UI ویندوز (دکمه، فیلد، گرید) - اولویت اصلی
+pywin32>=306          # win32gui/win32process/win32con - لازم برای پیدا کردن و فوکوس پنجره
+pyautogui>=0.9.54     # fallback برای کلیک/تایپ مبتنی بر مختصات (اگه UIA جواب نداد)
+openpyxl>=3.1.0       # خواندن/نوشتن اکسل و رنگ سلول‌ها
+pdf2image>=1.17.0     # تبدیل PDF به تصویر برای OCR
+pytesseract>=0.3.10   # OCR (نیاز به نصب جداگانه Tesseract-OCR روی ویندوز)
+Pillow>=10.0.0        # پردازش تصویر
+comtypes>=1.2.0       # وابستگی pywinauto برای برخی اپ‌های Win32 قدیمی
+psutil>=5.9.0         # برای پیدا کردن pid پروسه Bime.exe از روی نام (حتی اگه پنجره‌اش مخفی/tray باشه)
+pyperclip>=1.11.0     # لازم: پیست مسیرِ فارسیِ ذخیره‌ی PDF با Ctrl+V (typewrite حروف فارسی را تایپ نمی‌کند)
+
+# نکته: علاوه بر pip، باید این دو رو جدا روی ویندوز نصب کنی:
+# 1) Tesseract-OCR  -> https://github.com/UB-Mannheim/tesseract/wiki  (و زبان فارسی fas.traineddata رو هم اضافه کن)
+# 2) Poppler for Windows -> برای pdf2image لازمه (باید مسیرش به PATH اضافه بشه)

@@ -1,0 +1,20 @@
+{
+  "name": "دریافت عدم خسارت (نمونه)",
+  "description": "نمونه‌ی فلوی مرحله‌به‌مرحله برای flow_runner.py. نقاط (point) باید از قبل با calibrate_coords.py ثبت شده باشن. این فقط یک الگوست؛ ترتیب/مکث‌ها را مطابق برنامه‌ی خودت تنظیم کن. برای فلوی کامل ۱۷ مرحله‌ای run_no_claim_flow.py را استفاده کن.",
+  "steps": [
+    {"type": "note", "text": "شروع فلوی نمونه — کد بیمه‌گذار: {insurer_code}"},
+    {"type": "click", "point": "filter_icon"},
+    {"type": "sleep", "seconds": 1.0},
+    {"type": "click", "point": "search_field"},
+    {"type": "sleep", "seconds": 0.5},
+    {"type": "key", "keys": "ctrl+a"},
+    {"type": "type", "text": "{insurer_code}"},
+    {"type": "sleep", "seconds": 1.0},
+    {"type": "key", "keys": "enter"},
+    {"type": "sleep", "seconds": 1.5},
+    {"type": "select_last_zero_row"},
+    {"type": "sleep", "seconds": 1.0},
+    {"type": "click", "point": "estelam_khesarat_btn"},
+    {"type": "note", "text": "پایان فلوی نمونه — بقیه‌ی مراحل (پرینت/ذخیره) را در run_no_claim_flow.py ببین"}
+  ]
+}
